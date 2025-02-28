@@ -49,13 +49,13 @@ _process_thread_read(void* arg)
 		//if (::GetTickCount() - st > 20000)
 		//	break;
 
-		int n = shm.Read(NULL, 0);
+		int n = shm.Read(NULL, 0, 0);
 		if (n == 0)
 		{
 			std::cout << "读取出错" << std::endl;
 			continue;
 		}		
-		n = shm.Read(pOut, 0);
+		n = shm.Read(pOut, pInLen, 0);
 		pOut[n] = 0;
 	}
 	delete[] pOut;
@@ -76,7 +76,7 @@ int main(int argc, char** argv)
 
 	std::cout << "正在测试单线程读写中..." << std::endl;
 
-	int testCount = 10000;
+	int testCount = 100;
 
 	bool b = false;
 	DWORD st = ::GetTickCount();
@@ -93,6 +93,13 @@ int main(int argc, char** argv)
 	std::cout << "Write 速度:" << (double)testCount / (t / 1000.0) << " 次/秒" << std::endl;
 	//b = shm.Remove(0);
 
+	{
+		char* pOut = new char[1000 + 1];
+		int n = shm.Read(pOut, 1000, 0);
+		pOut[108] = 0;
+		delete[] pOut;
+	}
+
 	std::vector<int> idxs;
 	shm.ListDataIDs(idxs);
 	std::cout << "Writed data " << idxs.size() << " times." << std::endl;
@@ -100,14 +107,14 @@ int main(int argc, char** argv)
 	st = ::GetTickCount();	
 	for (size_t i = 0; i < testCount; i++)
 	{
-		int n = shm.Read(NULL, i);
+		int n = shm.Read(NULL, 0, i);
 		if (n == 0)
 		{
 			std::cout << "读取出错" << std::endl;
 			continue;
 		}
 		char* pOut = new char[n + 1];
-		n = shm.Read(pOut, i);
+		n = shm.Read(pOut, n, i);
 		pOut[n] = 0;
 		//std::cout << pOut << std::endl;
 		if (strcmp(pIn, pOut) != 0)

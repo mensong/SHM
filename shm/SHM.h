@@ -17,7 +17,7 @@ public:
     bool Init(const TCHAR* shmName, int blockCount, int blockSize);
     bool Write(const char* pData, int dataSize, int dataID);
     //可传入pOutBuf=NULL时获得数据长度。
-    int Read(char* pOutBuf, int dataID);
+    int Read(char* pOutBuf, int outBufSize, int dataID);
     bool Remove(int dataID);
     void ListDataIDs(std::vector<int>& idxs);
 

@@ -18,6 +18,8 @@ SHM::~SHM()
 {
     //FlushViewOfFile(lpMapAddr, strTest.length() + 1);
 
+    m_mutex.Lock();
+
     if (m_pBuf)
     {
         UnmapViewOfFile(m_pBuf);
@@ -30,6 +32,8 @@ SHM::~SHM()
         CloseHandle(m_hMapFile);
         m_hMapFile = NULL;
     }
+
+    m_mutex.Unlock();
 }
 
 bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
@@ -102,29 +106,35 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
     for (int i = 0; i < m_indexBufSize; i++)
         m_pIndexBuf[i] = -1;
 
-	m_pBlockBuf = m_pBuf + (m_indexBufSize * sizeof(int));
+    m_pBlockBuf = m_pBuf + (m_indexBufSize * sizeof(int));
 
     TCHAR dataLockName[MAX_PATH] = TEXT("");
     lstrcat(dataLockName, TEXT("Data_"));
     lstrcat(dataLockName, shmName);
     m_mutex.Init(dataLockName);
 
-	return true;
+    return true;
 }
 
 bool SHM::Write(const char* pData, int dataSize, int dataID)
 {
     if (dataID >= m_blockCount)
-		return false;
+        return false;
 
     m_mutex.Lock();
 
+    if (!m_pIndexBuf || !m_pBlockBuf)
+    {
+        m_mutex.Unlock();
+        return false;
+    }
+
     std::map<int, std::vector<int>> allIndexs;
-	getAllIndeies(allIndexs);
+    getAllIndeies(allIndexs);
     allIndexs.erase(dataID);
 
-	const char* pDataToWrite = pData;
-	int writeSize = dataSize;
+    const char* pDataToWrite = pData;
+    int writeSize = dataSize;
 
     //写大于一个block的数据
     while (writeSize > m_blockSize)
@@ -134,8 +144,8 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
             return false;
 
         char* p = m_pBlockBuf + (newIdx * (sizeof(int) + m_blockSize));
-		memcpy(p, (const void*)&m_blockSize, sizeof(int));
-		memcpy(p + sizeof(int), pDataToWrite, m_blockSize);
+        memcpy(p, (const void*)&m_blockSize, sizeof(int));
+        memcpy(p + sizeof(int), pDataToWrite, m_blockSize);
         allIndexs[dataID].push_back(newIdx);
 
         writeSize -= m_blockSize;
@@ -145,13 +155,13 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
     //写小于一个block的数据
     if (writeSize > 0)
     {
-		int newIdx = getNoUsedIdx(allIndexs, m_lastUsedIdx + 1);
-		if (newIdx < 0)
-			return false;
+        int newIdx = getNoUsedIdx(allIndexs, m_lastUsedIdx + 1);
+        if (newIdx < 0)
+            return false;
 
-		char* p = m_pBlockBuf + (newIdx * (sizeof(int) + m_blockSize));
-		memcpy(p, (const void*)&writeSize, sizeof(int));
-		memcpy(p + sizeof(int), pDataToWrite, writeSize);
+        char* p = m_pBlockBuf + (newIdx * (sizeof(int) + m_blockSize));
+        memcpy(p, (const void*)&writeSize, sizeof(int));
+        memcpy(p + sizeof(int), pDataToWrite, writeSize);
         allIndexs[dataID].push_back(newIdx);
 
         m_lastUsedIdx = newIdx;
@@ -159,10 +169,10 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
 
     //重写indexes data
     int w = 0;
-	for (auto it = allIndexs.begin(); it != allIndexs.end(); ++it)
+    for (auto it = allIndexs.begin(); it != allIndexs.end(); ++it)
     {
         //-1 dataID
-		m_pIndexBuf[w++] = -1; 
+        m_pIndexBuf[w++] = -1;
         m_pIndexBuf[w++] = it->first;
 
         auto& indexs = it->second;
@@ -172,34 +182,50 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
         }
     }
     //结束符 -1 -1
-    m_pIndexBuf[w++] = -1; 
+    m_pIndexBuf[w++] = -1;
     m_pIndexBuf[w++] = -1;
 
     m_mutex.Unlock();
-	return true;
+    return true;
 }
 
-int SHM::Read(char* pOutBuf, int dataID)
+int SHM::Read(char* pOutBuf, int outBufSize, int dataID)
 {
     if (dataID >= m_blockCount)
         return -1;
 
     m_mutex.Lock();
 
-	std::vector<int> indexs;
-	getIndeies(dataID, indexs);
+    if (!m_pIndexBuf || !m_pBlockBuf)
+    {
+        m_mutex.Unlock();
+        return -1;
+    }
+
+    std::vector<int> indexs;
+    getIndeies(dataID, indexs);
 
     int dataSizeTotal = 0;
     for (size_t i = 0; i < indexs.size(); i++)
     {
-		char* p = m_pBlockBuf + ((indexs[i]) * (sizeof(int) + m_blockSize));
+        char* p = m_pBlockBuf + ((indexs[i]) * (sizeof(int) + m_blockSize));
 
-		int dataSize = 0;
-		memcpy((PVOID)&dataSize, p, sizeof(int));
+        int dataSize = 0;
+        memcpy((PVOID)&dataSize, p, sizeof(int));
 
-        if (pOutBuf)
+        if (pOutBuf && outBufSize > 0)
         {
-            memcpy(pOutBuf + dataSizeTotal, p + sizeof(int), dataSize);
+			int readSize = min(dataSize, outBufSize);
+			memcpy(pOutBuf + dataSizeTotal, p + sizeof(int), readSize);
+
+			if (outBufSize <= dataSize)
+			{//已读完
+				pOutBuf += readSize;
+				dataSizeTotal += readSize;
+				break;
+			}
+
+			outBufSize -= readSize;
         }
 
         dataSizeTotal += dataSize;
@@ -215,6 +241,12 @@ bool SHM::Remove(int dataID)
 		return false;
 
 	m_mutex.Lock();
+
+    if (!m_pIndexBuf)
+    {
+        m_mutex.Unlock();
+        return false;
+    }
     
 	std::map<int, std::vector<int>> allIndexs;
 	getAllIndeies(allIndexs);
@@ -248,6 +280,12 @@ void SHM::ListDataIDs(std::vector<int>& idxs)
 {
     m_mutex.Lock();
 
+    if (!m_pIndexBuf)
+    {
+        m_mutex.Unlock();
+        return;
+    }
+
     bool isLastFlag = false;//上次是否是-1
     for (int i = 0; i < m_indexBufSize; i++)
     {
@@ -280,6 +318,9 @@ void SHM::ListDataIDs(std::vector<int>& idxs)
 
 void SHM::getIndeies(int dataID, std::vector<int>& idxs)
 {
+    if (!m_pIndexBuf)
+        return;
+
 	bool isLastFlag = false;//上次是否是-1
     int idx = 0;
     bool isInValidDataID = false;
@@ -324,6 +365,9 @@ void SHM::getIndeies(int dataID, std::vector<int>& idxs)
 
 void SHM::getAllIndeies(std::map<int, std::vector<int>>& idxs)
 {
+    if (!m_pIndexBuf)
+        return;
+
     int dataID = -1;//当前的dataID
     bool isLastFlag = false;//上次是否是-1
     for (int i = 0; i < m_indexBufSize; i++)
