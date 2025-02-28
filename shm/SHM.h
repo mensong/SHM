@@ -19,6 +19,7 @@ public:
     //可传入pOutBuf=NULL时获得数据长度。
     int Read(char* pOutBuf, int dataID);
     bool Remove(int dataID);
+    void ListDataIDs(std::vector<int>& idxs);
 
 protected:
 	void getIndeies(int dataID, std::vector<int>& idxs);

@@ -244,6 +244,36 @@ bool SHM::Remove(int dataID)
     return true;
 }
 
+void SHM::ListDataIDs(std::vector<int>& idxs)
+{
+    bool isLastFlag = false;//上次是否是-1
+    for (int i = 0; i < m_indexBufSize; i++)
+    {
+        int n = m_pIndexBuf[i];
+
+        if (n == -1)
+        {//遇到flag
+            if (isLastFlag)
+            {//连续遇到两个-1代表结束
+                return;
+            }
+            else //if (!isLastFlag)
+            {//遇到开始标志
+                isLastFlag = true;
+            }
+        }
+        else //if (n != -1)
+        {//遇到非flag
+            if (isLastFlag)
+            {//上次是一个-1，则代表是dataID
+                idxs.push_back(n);
+            }
+
+            isLastFlag = false;
+        }
+    }
+}
+
 void SHM::getIndeies(int dataID, std::vector<int>& idxs)
 {
 	bool isLastFlag = false;//上次是否是-1

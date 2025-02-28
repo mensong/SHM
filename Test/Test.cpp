@@ -93,6 +93,10 @@ int main(int argc, char** argv)
 	std::cout << "Write ËÙ¶È:" << (double)testCount / (t / 1000.0) << " ´Î/Ãë" << std::endl;
 	//b = shm.Remove(0);
 
+	std::vector<int> idxs;
+	shm.ListDataIDs(idxs);
+	std::cout << "Writed data " << idxs.size() << " times." << std::endl;
+
 	st = ::GetTickCount();	
 	for (size_t i = 0; i < testCount; i++)
 	{
