@@ -5,8 +5,8 @@
 #include "GlobalMutex.h"
 
 /*
--1 dataID idx1 idx2 -1 idx3 -1 idx4 -1 -1|blockSize blockData|blockSize blockData|blockSize blockData|blockSize blockData
-|---------------索引区域-----------------|----------------------------------数据区域-------------------------------------|
+-1 dataID idx1 idx2 -1 idx3 -1 idx4 -1 -1|unused indexs bits|blockSize blockData|blockSize blockData|blockSize blockData|blockSize blockData
+|---------------索引区域-----------------|  未使用的索引位  |----------------------------------数据区域-------------------------------------|
 */
 class SHM
 {
@@ -31,13 +31,22 @@ protected:
     int m_blockSize;
     
     HANDLE m_hMapFile;
+
     char* m_pBuf;
+
 	int* m_pIndexBuf;
     int m_indexBufSize;
+
+	__int64* m_pNoUsedIdxWarehouseBuf;
+    int m_noUsedIdxWarehouseBufSize;
+
 	char* m_pBlockBuf;
 
     GlobalMutex m_mutex;
 
     int m_lastUsedIdx;
+
+
+    DWORD times = 0;
 };
 

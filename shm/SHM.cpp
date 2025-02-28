@@ -8,6 +8,8 @@ SHM::SHM()
 	, m_pIndexBuf(NULL)
 	, m_pBlockBuf(NULL)
     , m_indexBufSize(0)
+    , m_pNoUsedIdxWarehouseBuf(NULL)
+	, m_noUsedIdxWarehouseBufSize(0)
     , m_blockCount(100)
     , m_blockSize(512)
     , m_lastUsedIdx(-1)
@@ -53,10 +55,17 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
         m_blockCount * 3 + //-1 dataID 0 1 2 -1 3 -1 4 5 -1 -1
         2;                //最后两个-1 -1
 
+	//索引仓库所需空间的块数（多少个int64）。
+    // 使用多个int64来存储，每个int64存储64个bit，每个bit代表一个block的索引号是否被使用，使用了设置为0，未使用设置为1。
+	// 然后使用 num & (-num) 来获取最低位的1，来获取未使用的索引号。
+    m_noUsedIdxWarehouseBufSize = m_blockCount / 63;//一个int64存储63个bit，最后一个bit不用。
+    if (m_blockCount % 63 != 0)
+        m_noUsedIdxWarehouseBufSize++;
 
     LARGE_INTEGER allocSize;
     allocSize.QuadPart =
         m_indexBufSize * sizeof(int) + //block索引号空间大小
+        m_noUsedIdxWarehouseBufSize * sizeof(__int64) + //block未使用的索引号空间大小
         blockCount * sizeof(int) + (blockCount * (blockSize * sizeof(char))); //存储数据大小的空间 + block的数据空间大小
 
     bool created = false;
@@ -106,7 +115,9 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
     for (int i = 0; i < m_indexBufSize; i++)
         m_pIndexBuf[i] = -1;
 
-    m_pBlockBuf = m_pBuf + (m_indexBufSize * sizeof(int));
+	m_pNoUsedIdxWarehouseBuf = (__int64*)(m_pIndexBuf + m_indexBufSize);
+
+    m_pBlockBuf = (char*)(m_pNoUsedIdxWarehouseBuf + m_noUsedIdxWarehouseBufSize);
 
     TCHAR dataLockName[MAX_PATH] = TEXT("");
     lstrcat(dataLockName, TEXT("Data_"));
@@ -404,31 +415,41 @@ void SHM::getAllIndeies(std::map<int, std::vector<int>>& idxs)
 
 int SHM::getNoUsedIdx(const std::map<int, std::vector<int>>& usedIdxs, int startIdx)
 {
-    std::set<int> _usedIdxs;
-	for (auto it = usedIdxs.begin(); it != usedIdxs.end(); ++it)
+	DWORD t = ::GetTickCount();
+
+	int idxRet = -1;
+    do
     {
-        for (size_t i = 0; i < it->second.size(); i++)
+        std::set<int> _usedIdxs;
+        for (auto it = usedIdxs.begin(); it != usedIdxs.end(); ++it)
         {
-            _usedIdxs.insert(it->second[i]);
+            for (size_t i = 0; i < it->second.size(); i++)
+            {
+                _usedIdxs.insert(it->second[i]);
+            }
         }
-    }
 
-    int idxSpaceSize = m_blockCount;
-    for (size_t i = startIdx; i < idxSpaceSize; i++)
-    {
-        if (_usedIdxs.find(i) == _usedIdxs.end())
+        int idxSpaceSize = m_blockCount;
+        for (size_t i = startIdx; i < idxSpaceSize; i++)
         {
-            return i;
+            if (_usedIdxs.find(i) == _usedIdxs.end())
+            {
+                idxRet = i;
+                break;
+            }
         }
-    }
 
-	for (size_t i = 0; i < startIdx; i++)
-	{
-		if (_usedIdxs.find(i) == _usedIdxs.end())
-		{
-			return i;
-		}
-	}
+        for (size_t i = 0; i < startIdx; i++)
+        {
+            if (_usedIdxs.find(i) == _usedIdxs.end())
+            {
+                idxRet = i;
+                break;
+            }
+        }
+    } while (false);
+    
+	times += ::GetTickCount() - t;
 
-    return -1;
+    return idxRet;
 }
