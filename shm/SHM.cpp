@@ -246,6 +246,8 @@ bool SHM::Remove(int dataID)
 
 void SHM::ListDataIDs(std::vector<int>& idxs)
 {
+    m_mutex.Lock();
+
     bool isLastFlag = false;//上次是否是-1
     for (int i = 0; i < m_indexBufSize; i++)
     {
@@ -272,6 +274,8 @@ void SHM::ListDataIDs(std::vector<int>& idxs)
             isLastFlag = false;
         }
     }
+
+    m_mutex.Unlock();
 }
 
 void SHM::getIndeies(int dataID, std::vector<int>& idxs)
