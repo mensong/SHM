@@ -55,7 +55,7 @@ _process_thread_read(void* arg)
 		{
 			std::cout << "读取出错" << std::endl;
 			continue;
-		}		
+		}
 		n = shm.Read(pOut, pInLen, 0);
 		pOut[n] = 0;
 	}
@@ -64,19 +64,70 @@ _process_thread_read(void* arg)
 	return 0;
 }
 
+void smallTest()
+{
+	{
+		char pRead[10] = { 0 };
+		int readN;
+		SHM shm;
+		shm.Init(L"mensong1", 30, 1);
+
+		shm.Write("0", 1, 0);
+		memset(pRead, 0, 10);
+		readN = shm.Read(pRead, 10, 0);
+
+		int u = shm.IsBlockUsed(0);
+		u = shm.IsBlockUsed(1);
+
+		shm.Write("12", 2, 1);
+		memset(pRead, 0, 10);
+		readN = shm.Read(pRead, 10, 1);
+
+		shm.Write("3", 1, 2);
+		memset(pRead, 0, 10);
+		readN = shm.Read(pRead, 10, 2);
+
+		shm.Write("4", 1, 3);
+		memset(pRead, 0, 10);
+		readN = shm.Read(pRead, 10, 3);
+
+		shm.Write("567", 3, 4);
+		memset(pRead, 0, 10);
+		readN = shm.Read(pRead, 10, 4);
+
+
+		shm.Write("0", 1, 0);
+		shm.Write("567", 3, 4);
+		shm.Write("3", 1, 2);
+		shm.Write("4", 1, 3);
+		shm.Write("12", 2, 1);
+
+		shm.Remove(0);
+		shm.Remove(1);
+		shm.Remove(2);
+		shm.Remove(3);
+		shm.Remove(4);
+
+		memset(pRead, 0, 10);
+		readN = shm.Read(pRead, 10, 4);
+
+		memset(pRead, 0, 10);
+		readN = shm.Read(pRead, 10, 2);
+
+		memset(pRead, 0, 10);
+		readN = shm.Read(pRead, 10, 3);
+
+		memset(pRead, 0, 10);
+		readN = shm.Read(pRead, 10, 1);
+
+		memset(pRead, 0, 10);
+		readN = shm.Read(pRead, 10, 0);
+	}
+}
 
 int main(int argc, char** argv)
 {
-	__int64 num = 0b0111111111111111111111111111111111111111111111111111111111111110;
-	//num = INT64_MAX;
-	//num = 4611686018427387904;
-	//num = 2305843009213693952;
-	__int64 lowest = num & (-num);
-	
-	int ii = 64 % 63;
-	
-
-	if (!shm.Init(L"mensong", 20000, 64))
+	if (!shm.Init(L"mensong", 25000, 64))
 	{
 		std::cout << "Init error." << std::endl;
 		return -1;
@@ -88,84 +139,88 @@ int main(int argc, char** argv)
 
 	int testCount = 10000;
 
-	bool b = false;
-	char *pRead = new char[pInLen + 1];
-	pRead[pInLen] = 0;
-	DWORD st = ::GetTickCount();
-	for (int i = 0; i < testCount; ++i)
+	auto testWriteFunc = [&]()->void
 	{
-		b = shm.Write(pIn, pInLen, i);
-		if (!b)
+		bool b = false;
+		char* pRead = new char[pInLen + 1];
+		pRead[pInLen] = 0;
+		DWORD st = ::GetTickCount();
+		for (int i = 0; i < testCount; ++i)
 		{
-			std::cout << "写数据出错" << std::endl;
-		}
+			b = shm.Write(pIn, pInLen, i);
+			if (!b)
+			{
+				std::cout << "写数据出错:" << i << std::endl;
+			}
 
-		pRead[0] = 0;
-		b = shm.Read(pRead, pInLen, i);
-		if (!b)
-		{
-			std::cout << "读数据出错" << std::endl;
+			pRead[0] = 0;
+			b = shm.Read(pRead, pInLen, i);
+			if (!b)
+			{
+				std::cout << "读数据出错:" << i << std::endl;
+			}
+			else if (strcmp(pIn, pRead) != 0)
+			{
+				std::cout << "读写数据出错:" << i << std::endl;
+			}
 		}
-		else if (strcmp(pIn, pRead) != 0)
-		{
-			std::cout << "读写数据出错" << std::endl;
-		}
-	}
-	DWORD t = ::GetTickCount() - st;
-	std::cout << "Write " << testCount << "次耗时:" << t << "毫秒" << std::endl;
-	std::cout << "Write 速度:" << (double)testCount / (t / 1000.0) << " 次/秒" << std::endl;
-	//b = shm.Remove(0);
-	delete[] pRead;
+		DWORD t = ::GetTickCount() - st;
+		std::cout << "Write " << testCount << "次耗时:" << t << "毫秒" << std::endl;
+		std::cout << "Write 速度:" << (double)testCount / (t / 1000.0) << " 次/秒" << std::endl;
+		delete[] pRead;
+	};
+	testWriteFunc();
+	testWriteFunc();
+	testWriteFunc();
 
 	{
-		char* pOut = new char[1000 + 1];
-		int n = shm.Read(pOut, 1000, 0);
-		pOut[108] = 0;
-		delete[] pOut;
-	}
-
-	std::vector<int> idxs;
-	shm.ListDataIDs(idxs);
-	std::cout << "Writed data " << idxs.size() << " times." << std::endl;
-
-	st = ::GetTickCount();	
-	for (size_t i = 0; i < testCount; i++)
-	{
-		int n = shm.Read(NULL, 0, i);
-		if (n == 0)
-		{
-			std::cout << "读取出错" << std::endl;
-			continue;
-		}
-		char* pOut = new char[n + 1];
-		n = shm.Read(pOut, n, i);
-		pOut[n] = 0;
-		//std::cout << pOut << std::endl;
-		if (strcmp(pIn, pOut) != 0)
-		{
-			std::cout << "测试不通过" << std::endl;
-		}
-		
-		delete[] pOut;
-	}
-	t = ::GetTickCount() - st;
-	std::cout << "Read " << testCount << "次耗时:" << t << "毫秒" << std::endl;
-	std::string sSpeed = (t == 0 ? 
-		("大于" + std::to_string(testCount)) : 
-		std::to_string((double)testCount / (t / 1000.0)));
-	std::cout << "Read 速度:" << sSpeed << " 次/秒" << std::endl;
-
-	//多线程测试
-	for (int i = 0; i < 16; ++i)
-	{
-		unsigned  uiThreadID = 0;
-		unsigned  uiThreadID1 = 0;
-		HANDLE hThread = (HANDLE)_beginthreadex(NULL, 0, _process_thread_write, (void*)NULL, 0, &uiThreadID);
-		HANDLE hThread1 = (HANDLE)_beginthreadex(NULL, 0, _process_thread_read, (void*)NULL, 0, &uiThreadID1);
+		std::vector<int> dataIDs;
+		shm.ListDataIDs(dataIDs);
+		std::cout << "ListDataIDs count " << dataIDs.size() << " times." << std::endl;
 	}
 
-	std::cout << "正在测试多线程读写中，按回车键退出.";
-    getchar();
+	{
+		DWORD st = ::GetTickCount();
+		for (size_t i = 0; i < testCount; i++)
+		{
+			int n = shm.Read(NULL, 0, i);
+			if (n == 0)
+			{
+				std::cout << "读取出错" << std::endl;
+				continue;
+			}
+			char* pOut = new char[n + 1];
+			n = shm.Read(pOut, n, i);
+			pOut[n] = 0;
+			//std::cout << pOut << std::endl;
+			if (strcmp(pIn, pOut) != 0)
+			{
+				std::cout << "测试不通过" << std::endl;
+			}
+
+			delete[] pOut;
+		}
+		DWORD t = ::GetTickCount() - st;
+		std::cout << "Read " << testCount << "次耗时:" << t << "毫秒" << std::endl;
+		std::string sSpeed = (t == 0 ?
+			("大于" + std::to_string(testCount)) :
+			std::to_string((double)testCount / (t / 1000.0)));
+		std::cout << "Read 速度:" << sSpeed << " 次/秒" << std::endl;
+	}
+
+	{
+		//多线程测试
+		for (int i = 0; i < 16; ++i)
+		{
+			unsigned  uiThreadID = 0;
+			unsigned  uiThreadID1 = 0;
+			HANDLE hThread = (HANDLE)_beginthreadex(NULL, 0, _process_thread_write, (void*)NULL, 0, &uiThreadID);
+			HANDLE hThread1 = (HANDLE)_beginthreadex(NULL, 0, _process_thread_read, (void*)NULL, 0, &uiThreadID1);
+		}
+
+		std::cout << "正在测试多线程读写中，按回车键退出.";
+	}
+	getchar();
 
 	return 0;
 }

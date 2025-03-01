@@ -1,18 +1,30 @@
 #include "shm.h"
 #include <set>
 
+__int64 setBit0(__int64 num, int pos)
+{
+    return num & ~(1ULL << pos);
+}
+__int64 setBit1(__int64 num, int pos)
+{
+    return num | (1ULL << pos);
+}
+bool isBit1(__int64 num, int pos)
+{
+    return (num & (1ULL << pos)) != 0;
+}
 
 SHM::SHM()
     : m_hMapFile(NULL)
     , m_pBuf(NULL)
-	, m_pIndexBuf(NULL)
+	, m_pIndexInfoBuf(NULL)
 	, m_pBlockBuf(NULL)
-    , m_indexBufSize(0)
+    , m_indexInfoBufSize(0)
+    , m_cacheIndexInfoBufForWrite(NULL)
     , m_pNoUsedIdxWarehouseBuf(NULL)
 	, m_noUsedIdxWarehouseBufSize(0)
     , m_blockCount(100)
     , m_blockSize(512)
-    , m_lastUsedIdx(-1)
 {
 }
 
@@ -26,7 +38,7 @@ SHM::~SHM()
     {
         UnmapViewOfFile(m_pBuf);
         m_pBuf = NULL;
-        m_pIndexBuf = NULL;
+        m_pIndexInfoBuf = NULL;
         m_pBlockBuf = NULL;
     }
     if (m_hMapFile && m_hMapFile != INVALID_HANDLE_VALUE)
@@ -51,9 +63,10 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
     m_blockSize = blockSize;
 
     //索引所需的空间
-    m_indexBufSize = 
-        m_blockCount * 3 + //-1 dataID 0 1 2 -1 3 -1 4 5 -1 -1
-        2;                //最后两个-1 -1
+    m_indexInfoBufSize = 
+		m_blockCount * 3 + //例子：size(4) dataID 0 1 2 size(1) 3 size(2) 4 5 -1 -1，耗最多内存的是每个数据都占一个block的情况，所以size+dataID+index要占3个int。
+		1;                //最后INT_MIN代表索引空间结束标志。
+	m_cacheIndexInfoBufForWrite = new int[m_indexInfoBufSize];
 
 	//索引仓库所需空间的块数（多少个int64）。
     // 使用多个int64来存储，每个int64存储64个bit，每个bit代表一个block的索引号是否被使用，使用了设置为0，未使用设置为1。
@@ -64,7 +77,7 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
 
     LARGE_INTEGER allocSize;
     allocSize.QuadPart =
-        m_indexBufSize * sizeof(int) + //block索引号空间大小
+        m_indexInfoBufSize * sizeof(int) + //block索引号空间大小
         m_noUsedIdxWarehouseBufSize * sizeof(__int64) + //block未使用的索引号空间大小
         blockCount * sizeof(int) + (blockCount * (blockSize * sizeof(char))); //存储数据大小的空间 + block的数据空间大小
 
@@ -111,13 +124,19 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
         memset(m_pBuf, 0, allocSize.QuadPart);
     }
 
-	m_pIndexBuf = (int*)m_pBuf;
-    for (int i = 0; i < m_indexBufSize; i++)
-        m_pIndexBuf[i] = -1;
+	m_pIndexInfoBuf = (int*)m_pBuf;
+    if (created)
+    {
+        for (int i = 0; i < m_indexInfoBufSize; i++)
+            m_pIndexInfoBuf[i] = INT_MIN;
+    }
 
-	m_pNoUsedIdxWarehouseBuf = (__int64*)(m_pIndexBuf + m_indexBufSize);
-    for (int i = 0; i < m_noUsedIdxWarehouseBufSize; i++)
-        m_pNoUsedIdxWarehouseBuf[i] = 0b0111111111111111111111111111111111111111111111111111111111111111;
+	m_pNoUsedIdxWarehouseBuf = (__int64*)(m_pIndexInfoBuf + m_indexInfoBufSize);
+    if (created)
+    {
+        for (int i = 0; i < m_noUsedIdxWarehouseBufSize; i++)
+            m_pNoUsedIdxWarehouseBuf[i] = 0b0111111111111111111111111111111111111111111111111111111111111111;
+    }
 
     m_pBlockBuf = (char*)(m_pNoUsedIdxWarehouseBuf + m_noUsedIdxWarehouseBufSize);
 
@@ -136,69 +155,99 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
 
     m_mutex.Lock();
 
-    if (!m_pIndexBuf || !m_pBlockBuf)
+    if (!m_pIndexInfoBuf || !m_pBlockBuf)
     {
         m_mutex.Unlock();
         return false;
     }
 
-    std::map<int, std::vector<int>> allIndexs;
-    getAllIndeies(allIndexs);
-    allIndexs.erase(dataID);
-
     const char* pDataToWrite = pData;
     int writeSize = dataSize;
 
+    std::vector<int> newIdxs;
     //写大于一个block的数据
     while (writeSize > m_blockSize)
     {
-        int newIdx = getNoUsedIdx();
+        int newIdx = getNoUsedBlockIdx();
         if (newIdx < 0)
             return false;
 
         char* p = m_pBlockBuf + (newIdx * (sizeof(int) + m_blockSize));
         memcpy(p, (const void*)&m_blockSize, sizeof(int));
         memcpy(p + sizeof(int), pDataToWrite, m_blockSize);
-        allIndexs[dataID].push_back(newIdx);
+
+        newIdxs.push_back(newIdx);
+        setBlockIndexUsed(newIdx);
 
         writeSize -= m_blockSize;
-        pDataToWrite += m_blockSize;
-        m_lastUsedIdx = newIdx;
-		setBlockIndexUsed(newIdx);
+        pDataToWrite += m_blockSize;		
     }
     //写小于一个block的数据
     if (writeSize > 0)
     {
-        int newIdx = getNoUsedIdx();
+        int newIdx = getNoUsedBlockIdx();
         if (newIdx < 0)
             return false;
 
         char* p = m_pBlockBuf + (newIdx * (sizeof(int) + m_blockSize));
         memcpy(p, (const void*)&writeSize, sizeof(int));
         memcpy(p + sizeof(int), pDataToWrite, writeSize);
-        allIndexs[dataID].push_back(newIdx);
 
-        m_lastUsedIdx = newIdx;
+        newIdxs.push_back(newIdx);
         setBlockIndexUsed(newIdx);
     }
 
     //重写indexes data
-    int w = 0;
-    for (auto it = allIndexs.begin(); it != allIndexs.end(); ++it)
-    {
-        //-1 dataID
-        m_pIndexBuf[w++] = -1;
-        m_pIndexBuf[w++] = it->first;
+	// 先写旧的索引信息，要排除掉dataID对应的索引。
+	int* pIndexInfoToWriteStartBuf = m_pIndexInfoBuf;
+    int leftSize = 0;
 
-        auto& indexs = it->second;
-        for (size_t i = 0; i < indexs.size(); i++)
+    //1.在dataID之前的索引信息数据不需要动
+    TraverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
+    {
+        if (_dataID == dataID)
         {
-            m_pIndexBuf[w++] = indexs[i];
+			//设置block索引号为未使用
+            for (int i = 0; i < blockIdxListSize; i++)
+            {
+                setBlockIndexNoUsed(blockIdxList[i]);
+            }
+            
+            //拷贝dataID之后的数据到m_cacheIndexInfoBufForWrite
+            leftSize = (m_indexInfoBufSize * sizeof(int) - (pIndexInfoToWriteStartBuf - m_pIndexInfoBuf) - (infoSize + 1));
+            if (leftSize <= 0)
+                return false;
+            memcpy(m_cacheIndexInfoBufForWrite, pIndexInfoToWriteStartBuf + infoSize + 1, leftSize);
+
+            return false;
         }
-    }
-    //结束符 -1 -1
-    m_pIndexBuf[w++] = -1;
-    m_pIndexBuf[w++] = -1;
+        else
+        {
+            pIndexInfoToWriteStartBuf += infoSize + 1;
+        }
+
+        return true;
+    });
+
+	//2.写入新的索引信息数据
+	pIndexInfoToWriteStartBuf[0] = 1/*dataID*/ + newIdxs.size();//size(1) dataID idx1 idx2 size(1) idx3 size(1) idx4 -1 -1
+    pIndexInfoToWriteStartBuf[1] = dataID;
+    memcpy(pIndexInfoToWriteStartBuf + 2, &newIdxs[0], newIdxs.size() * sizeof(int));
+	pIndexInfoToWriteStartBuf += 2 + newIdxs.size();
+
+	//3.写入dataID后面的索引信息数据
+	TraverseIndexInfo(m_cacheIndexInfoBufForWrite, leftSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
+	{
+		pIndexInfoToWriteStartBuf[0] = infoSize;
+		pIndexInfoToWriteStartBuf[1] = _dataID;
+		memcpy(pIndexInfoToWriteStartBuf + 2, blockIdxList, blockIdxListSize * sizeof(int));
+
+        pIndexInfoToWriteStartBuf += infoSize + 1;
+        
+        return true;
+	});
+    //4.写结束符号
+	*pIndexInfoToWriteStartBuf = INT_MIN;
 
     m_mutex.Unlock();
     return true;
@@ -211,41 +260,49 @@ int SHM::Read(char* pOutBuf, int outBufSize, int dataID)
 
     m_mutex.Lock();
 
-    if (!m_pIndexBuf || !m_pBlockBuf)
+    if (!m_pIndexInfoBuf || !m_pBlockBuf)
     {
         m_mutex.Unlock();
         return -1;
     }
 
-    std::vector<int> indexs;
-    getIndeies(dataID, indexs);
 
     int dataSizeTotal = 0;
-    for (size_t i = 0; i < indexs.size(); i++)
+    TraverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
     {
-        char* p = m_pBlockBuf + ((indexs[i]) * (sizeof(int) + m_blockSize));
-
-        int dataSize = 0;
-        memcpy((PVOID)&dataSize, p, sizeof(int));
-
-        if (pOutBuf && outBufSize > 0)
+        if (_dataID == dataID)
         {
-			int readSize = min(dataSize, outBufSize);
-			memcpy(pOutBuf + dataSizeTotal, p + sizeof(int), readSize);
+            for (size_t i = 0; i < blockIdxListSize; i++)
+            {
+                char* p = m_pBlockBuf + ((blockIdxList[i]) * (sizeof(int) + m_blockSize));
 
-			if (outBufSize <= dataSize)
-			{//已读完
-				pOutBuf += readSize;
-				dataSizeTotal += readSize;
-				break;
-			}
+                int dataSize = 0;
+                memcpy((PVOID)&dataSize, p, sizeof(int));
 
-			outBufSize -= readSize;
+                if (pOutBuf && outBufSize > 0)
+                {
+                    int readSize = min(dataSize, outBufSize);
+                    memcpy(pOutBuf + dataSizeTotal, p + sizeof(int), readSize);
+
+                    if (outBufSize <= dataSize)
+                    {//已读完
+                        pOutBuf += readSize;
+                        dataSizeTotal += readSize;
+                        break;
+                    }
+
+                    outBufSize -= readSize;
+                }
+
+                dataSizeTotal += dataSize;
+            }
+
+            return false;
         }
 
-        dataSizeTotal += dataSize;
-    }
-    
+        return true;
+    });
+            
     m_mutex.Unlock();
 	return dataSizeTotal;
 }
@@ -257,220 +314,134 @@ bool SHM::Remove(int dataID)
 
 	m_mutex.Lock();
 
-    if (!m_pIndexBuf)
+    if (!m_pIndexInfoBuf)
     {
         m_mutex.Unlock();
         return false;
     }
     
-	std::map<int, std::vector<int>> allIndexs;
-	getAllIndeies(allIndexs);
+    //重写indexes data
+    // 先写旧的索引信息，要排除掉dataID对应的索引。
+    int* pIndexInfoToWriteStartBuf = m_pIndexInfoBuf;
+    int leftSize = 0;
 
-    //
-    auto itErase = allIndexs.find(dataID);
-    if (itErase == allIndexs.end())
-        return false;
-    
-	//重新设置为未使用
-	for (size_t i = 0; i < itErase->second.size(); i++)
-	{
-		setBlockIndexNoUsed(itErase->second[i]);
-	}
+    //1.在dataID之前的索引信息数据不需要动
+    TraverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
+    {
+        if (_dataID == dataID)
+        {
+            //设置block索引号为未使用
+            for (int i = 0; i < blockIdxListSize; i++)
+            {
+                setBlockIndexNoUsed(blockIdxList[i]);
+            }
 
-    //直接删除索引
-	allIndexs.erase(itErase);
+            //拷贝dataID之后的数据到m_cacheIndexInfoBufForWrite
+            leftSize = (m_indexInfoBufSize * sizeof(int) - (pIndexInfoToWriteStartBuf - m_pIndexInfoBuf) - (infoSize + 1));
+            if (leftSize <= 0)
+                return false;
+            memcpy(m_cacheIndexInfoBufForWrite, pIndexInfoToWriteStartBuf + infoSize + 1, leftSize);
 
-	//重写indexes data
-	int w = 0;
-	for (auto it = allIndexs.begin(); it != allIndexs.end(); ++it)
-	{
-		//-1 dataID
-		m_pIndexBuf[w++] = -1;
-		m_pIndexBuf[w++] = it->first;
+            return false;
+        }
+        else
+        {
+            pIndexInfoToWriteStartBuf += infoSize + 1;
+        }
 
-		auto& indexs = it->second;
-		for (size_t i = 0; i < indexs.size(); i++)
-		{
-			m_pIndexBuf[w++] = indexs[i];
-		}
-	}
-	//结束符 -1 -1
-	m_pIndexBuf[w++] = -1;
-	m_pIndexBuf[w++] = -1;
+        return true;
+    });
+
+    //2.写入dataID后面的索引信息数据
+    TraverseIndexInfo(m_cacheIndexInfoBufForWrite, leftSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
+    {
+        pIndexInfoToWriteStartBuf[0] = infoSize;
+        pIndexInfoToWriteStartBuf[1] = _dataID;
+        memcpy(pIndexInfoToWriteStartBuf + 2, blockIdxList, blockIdxListSize * sizeof(int));
+
+        pIndexInfoToWriteStartBuf += infoSize + 1;
+
+        return true;
+    });
+    //3.写结束符号
+    *pIndexInfoToWriteStartBuf = INT_MIN;
 
 	m_mutex.Unlock();
     return true;
 }
 
-void SHM::ListDataIDs(std::vector<int>& idxs)
+void SHM::ListDataIDs(std::vector<int>& dataIDs)
 {
     m_mutex.Lock();
 
-    if (!m_pIndexBuf)
+    if (!m_pIndexInfoBuf)
     {
         m_mutex.Unlock();
         return;
     }
 
-    bool isLastFlag = false;//上次是否是-1
-    for (int i = 0; i < m_indexBufSize; i++)
+    TraverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
     {
-        int n = m_pIndexBuf[i];
-
-        if (n == -1)
-        {//遇到flag
-            if (isLastFlag)
-            {//连续遇到两个-1代表结束
-                return;
-            }
-            else //if (!isLastFlag)
-            {//遇到开始标志
-                isLastFlag = true;
-            }
-        }
-        else //if (n != -1)
-        {//遇到非flag
-            if (isLastFlag)
-            {//上次是一个-1，则代表是dataID
-                idxs.push_back(n);
-            }
-
-            isLastFlag = false;
-        }
-    }
+        dataIDs.push_back(_dataID);
+        return true;
+    });
 
     m_mutex.Unlock();
 }
 
-void SHM::getIndeies(int dataID, std::vector<int>& idxs)
+int SHM::IsBlockUsed(int blockIdx)
 {
-    if (!m_pIndexBuf)
-        return;
+	if (blockIdx >= m_blockCount)
+		return -1;
 
-	bool isLastFlag = false;//上次是否是-1
-    int idx = 0;
-    bool isInValidDataID = false;
-	for (int i = 0; i < m_indexBufSize; i++)
-	{
-		int n = m_pIndexBuf[i];
+    //找到仓库
+    int warehouse = -1;
+    int idxInAWarehouse = -1;
+    if (!whereInWarehouse(blockIdx, &warehouse, &idxInAWarehouse))
+        return -1;
 
-		if (n == -1)
-		{//遇到flag
-			if (isLastFlag)
-			{//连续遇到两个-1代表结束
-				return;
-			}
-			else //if (!isLastFlag)
-			{//遇到开始标志
-				isLastFlag = true;
-
-                if (isInValidDataID)
-                {//已经读取过了，不需要再向下读取
-                    return;
-                }
-			}
-		}
-		else //if (n != -1)
-		{//遇到非flag
-			if (isLastFlag)
-			{//上次是一个-1，则代表是dataID
-                if (n == dataID)
-                {
-                    isInValidDataID = true;
-                }
-			}
-			else if (isInValidDataID)
-			{//是有效的索引数据
-                idxs.push_back(n);
-			}
-
-			isLastFlag = false;
-		}
-	}
+    if (isBit1(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse))
+		return 0;
+	else
+		return 1;
 }
 
-void SHM::getAllIndeies(std::map<int, std::vector<int>>& idxs)
+bool SHM::TraverseIndexInfo(int* indexInfoBuf, int indexInfoBufSize, FN_IndexInfoCallback cb)
 {
-    if (!m_pIndexBuf)
-        return;
+    if (!indexInfoBuf)
+        return false;
 
-    int dataID = -1;//当前的dataID
-    bool isLastFlag = false;//上次是否是-1
-    for (int i = 0; i < m_indexBufSize; i++)
+    int* p = indexInfoBuf;
+    int infoSize = 0;
+    for (int i = 0; i < indexInfoBufSize; i++)
     {
-        int n = m_pIndexBuf[i];
-
-        if (n == -1)
-        {//遇到flag
-            if (isLastFlag)
-            {//连续遇到两个-1代表结束
-                return;
-            }
-            else //if (!isLastFlag)
-			{//遇到开始标志
-				isLastFlag = true;
-				dataID = -1;
+        infoSize = *p;
+        if (infoSize > 0)
+        {
+            //(dataID, blockIdxList, blockIdxListSize)
+            if (!cb(infoSize, *(p + 1), p + 2, infoSize - 1))
+			{//回调函数返回false，中断遍历
+                return true;
             }
         }
-        else //if (n != -1)
-        {//遇到非flag
-            if (isLastFlag)
-            {//上次是一个-1，则代表是dataID
-                dataID = n;
-            }
-            else if (dataID != -1)
-            {//是索引数据
-                idxs[dataID].push_back(n);
-            }
-
-            isLastFlag = false;
+        else if (infoSize == INT_MIN)
+		{//结束符
+            return true;
         }
+        else
+		{//error。因为infoSize应该大于0或者等于INT_MIN
+            return false;
+        }
+
+        //next
+        p += infoSize + 1;
     }
+
+    return false;
 }
 
-int SHM::getNoUsedIdx()
+int SHM::getNoUsedBlockIdx()
 {
-#if 0
-    DWORD t = ::GetTickCount();
-
-	int idxRet = -1;
-    do
-    {
-        std::set<int> _usedIdxs;
-        for (auto it = usedIdxs.begin(); it != usedIdxs.end(); ++it)
-        {
-            for (size_t i = 0; i < it->second.size(); i++)
-            {
-                _usedIdxs.insert(it->second[i]);
-            }
-        }
-
-        int idxSpaceSize = m_blockCount;
-        for (size_t i = startIdx; i < idxSpaceSize; i++)
-        {
-            if (_usedIdxs.find(i) == _usedIdxs.end())
-            {
-                idxRet = i;
-                break;
-            }
-        }
-
-        for (size_t i = 0; i < startIdx; i++)
-        {
-            if (_usedIdxs.find(i) == _usedIdxs.end())
-            {
-                idxRet = i;
-                break;
-            }
-        }
-    } while (false);
-    
-	times += ::GetTickCount() - t;
-
-    return idxRet;
-
-#else
-
 	int idxRet = -1;
 	do
 	{
@@ -486,9 +457,10 @@ int SHM::getNoUsedIdx()
 
         }
 	} while (false);
-	return idxRet;
 
-#endif
+    if (idxRet >= m_blockCount)
+		idxRet = -1;
+	return idxRet;
 }
 
 int SHM::getNoZeroBitNum(__int64 warehouse)
@@ -629,44 +601,44 @@ int SHM::getNoZeroBitNum(__int64 warehouse)
     return 0;
 }
 
-__int64 setBit0(__int64 num, int pos) 
+bool SHM::setBlockIndexUsed(int blockIdx)
 {
-    return num & ~(1ULL << pos);
-}
-__int64 setBit1(__int64 num, int pos) 
-{
-    return num | (1ULL << pos);
-}
-
-
-bool SHM::setBlockIndexUsed(int idx)
-{
-    if (idx < 0 || idx >= m_blockCount)
+    int warehouse = -1;
+    int idxInAWarehouse = -1;
+    if (!whereInWarehouse(blockIdx, &warehouse, &idxInAWarehouse))
         return false;
 
-	int warehouse = idx / 63;
-    if (warehouse >= m_noUsedIdxWarehouseBufSize)
-		return false;
-
-    int idxInAWarehouse = idx % 63;
     m_pNoUsedIdxWarehouseBuf[warehouse] = 
         setBit0(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
 
     return true;
 }
 
-bool SHM::setBlockIndexNoUsed(int idx)
+bool SHM::setBlockIndexNoUsed(int blockIdx)
 {
-    if (idx < 0 || idx >= m_blockCount)
+    int warehouse = -1;
+    int idxInAWarehouse = -1;
+    if (!whereInWarehouse(blockIdx, &warehouse, &idxInAWarehouse))
         return false;
 
-    int warehouse = idx / 63;
-    if (warehouse >= m_noUsedIdxWarehouseBufSize)
-        return false;
-
-    int idxInAWarehouse = idx % 63;
     m_pNoUsedIdxWarehouseBuf[warehouse] =
         setBit1(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
+
+    return true;
+}
+
+bool SHM::whereInWarehouse(int blockIdx, int* warehouseIdx, int* idxInAWarehouse)
+{
+    if (blockIdx < 0 || blockIdx >= m_blockCount)
+        return false;
+
+	//找到仓库的索引
+    *warehouseIdx = blockIdx / 63;
+    if (*warehouseIdx >= m_noUsedIdxWarehouseBufSize)
+        return false;
+
+	//找到在仓库中的索引
+    *idxInAWarehouse = blockIdx % 63;
 
     return true;
 }
