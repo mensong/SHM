@@ -89,6 +89,8 @@ int main(int argc, char** argv)
 	int testCount = 10000;
 
 	bool b = false;
+	char *pRead = new char[pInLen + 1];
+	pRead[pInLen] = 0;
 	DWORD st = ::GetTickCount();
 	for (int i = 0; i < testCount; ++i)
 	{
@@ -97,11 +99,23 @@ int main(int argc, char** argv)
 		{
 			std::cout << "写数据出错" << std::endl;
 		}
+
+		pRead[0] = 0;
+		b = shm.Read(pRead, pInLen, i);
+		if (!b)
+		{
+			std::cout << "读数据出错" << std::endl;
+		}
+		else if (strcmp(pIn, pRead) != 0)
+		{
+			std::cout << "读写数据出错" << std::endl;
+		}
 	}
 	DWORD t = ::GetTickCount() - st;
 	std::cout << "Write " << testCount << "次耗时:" << t << "毫秒" << std::endl;
 	std::cout << "Write 速度:" << (double)testCount / (t / 1000.0) << " 次/秒" << std::endl;
 	//b = shm.Remove(0);
+	delete[] pRead;
 
 	{
 		char* pOut = new char[1000 + 1];
