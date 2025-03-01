@@ -10,6 +10,10 @@ size(3) dataID idx1 idx2 size(1) idx3 size(1) idx4 INT_MIN|unused indexs bits|bl
 class SHM
 {
 public:
+    //遍历索引信息的回调，返回false则中断遍历。
+    typedef std::function<bool(int infoSize, int dataID, int* blockIdxList, int blockIdxListSize)> FN_IndexInfoCallback;
+
+public:
     SHM();
     ~SHM();
 
@@ -27,16 +31,19 @@ public:
 	//-1:出错；0:未使用；1:已使用
 	int IsBlockUsed(int blockIdx);
 
-    //遍历索引信息的回调，返回false则中断遍历。
-    typedef std::function<bool(int infoSize, int dataID, int* blockIdxList, int blockIdxListSize)> FN_IndexInfoCallback;
-	//遍历索引信息
-    bool TraverseIndexInfo(int* indexInfoBuf, int indexInfoBufSize, FN_IndexInfoCallback cb);
+    //遍历索引信息
+    bool TraverseIndexInfo(FN_IndexInfoCallback cb);
+
+    //获得dataID所用到的BlockIdx列表
+    bool ListBlockIndexs(int dataID, std::vector<int>& blockIdxList);
 
 protected:
     int getNoUsedBlockIdx();
     int getNoZeroBitNum(__int64 warehouse);
     bool setBlockIndexUsed(int blockIdx);
     bool setBlockIndexNoUsed(int blockIdx);
+    //遍历索引信息
+    bool traverseIndexInfo(int* indexInfoBuf, int indexInfoBufSize, FN_IndexInfoCallback cb);
 
 protected:
     int m_blockCount;

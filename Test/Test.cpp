@@ -7,10 +7,13 @@
 #include <process.h>
 #include "../shm/SHM.h"
 #include <bitset>
+#include <atomic>
 
 SHM shm;
 const char* pIn = "123456789987654321123456789987654321123456789987654321123456789987654321123456789987654321123456789987654321";
 size_t pInLen = 0;
+
+std::atomic<bool> g_bExit = false;
 
 #ifdef _WIN32
 unsigned __stdcall
@@ -20,8 +23,7 @@ void*
 _process_thread_write(void* arg)
 {
 	bool b = false;
-	DWORD st = ::GetTickCount();
-	while (true)
+	while (!g_bExit)
 	{
 		//if (::GetTickCount() - st > 20000)
 		//	break;
@@ -44,8 +46,7 @@ void*
 _process_thread_read(void* arg)
 {
 	char* pOut = new char[pInLen + 1];
-	DWORD st = ::GetTickCount();
-	while (true)
+	while (!g_bExit)
 	{
 		//if (::GetTickCount() - st > 20000)
 		//	break;
@@ -153,16 +154,16 @@ int main(int argc, char** argv)
 				std::cout << "写数据出错:" << i << std::endl;
 			}
 
-			pRead[0] = 0;
-			b = shm.Read(pRead, pInLen, i);
-			if (!b)
-			{
-				std::cout << "读数据出错:" << i << std::endl;
-			}
-			else if (strcmp(pIn, pRead) != 0)
-			{
-				std::cout << "读写数据出错:" << i << std::endl;
-			}
+			//pRead[0] = 0;
+			//b = shm.Read(pRead, pInLen, i);
+			//if (!b)
+			//{
+			//	std::cout << "读数据出错:" << i << std::endl;
+			//}
+			//else if (strcmp(pIn, pRead) != 0)
+			//{
+			//	std::cout << "读写数据出错:" << i << std::endl;
+			//}
 		}
 		DWORD t = ::GetTickCount() - st;
 		std::cout << "Write " << testCount << "次耗时:" << t << "毫秒" << std::endl;
@@ -218,8 +219,26 @@ int main(int argc, char** argv)
 			HANDLE hThread1 = (HANDLE)_beginthreadex(NULL, 0, _process_thread_read, (void*)NULL, 0, &uiThreadID1);
 		}
 
-		std::cout << "正在测试多线程读写中，按回车键退出.";
+		std::cout << "正在测试多线程读写中，按回车键退出线程" << std::endl;
 	}
+
+	getchar();
+	g_bExit = true;
+	Sleep(2000);
+
+	{
+		std::cout << "正在测试删除数据中..." << std::endl;
+		DWORD st = ::GetTickCount();
+		for (size_t i = 0; i < testCount; i++)
+		{
+			shm.Remove(i);
+		}
+		DWORD t = ::GetTickCount() - st;
+		std::cout << "Remove " << testCount << "次耗时:" << t << "毫秒" << std::endl;
+		std::cout << "Remove 速度:" << (double)testCount / (t / 1000.0) << " 次/秒" << std::endl;
+	}
+
+	std::cout << "按回车键退出程序" << std::endl;
 	getchar();
 
 	return 0;

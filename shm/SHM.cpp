@@ -203,7 +203,7 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
     int leftSize = 0;
 
     //1.在dataID之前的索引信息数据不需要动
-    TraverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
+    traverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
     {
         if (_dataID == dataID)
         {
@@ -236,7 +236,7 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
 	pIndexInfoToWriteStartBuf += 2 + newIdxs.size();
 
 	//3.写入dataID后面的索引信息数据
-	TraverseIndexInfo(m_cacheIndexInfoBufForWrite, leftSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
+	traverseIndexInfo(m_cacheIndexInfoBufForWrite, leftSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
 	{
 		pIndexInfoToWriteStartBuf[0] = infoSize;
 		pIndexInfoToWriteStartBuf[1] = _dataID;
@@ -268,7 +268,7 @@ int SHM::Read(char* pOutBuf, int outBufSize, int dataID)
 
 
     int dataSizeTotal = 0;
-    TraverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
+    traverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
     {
         if (_dataID == dataID)
         {
@@ -326,7 +326,7 @@ bool SHM::Remove(int dataID)
     int leftSize = 0;
 
     //1.在dataID之前的索引信息数据不需要动
-    TraverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
+    traverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
     {
         if (_dataID == dataID)
         {
@@ -353,7 +353,7 @@ bool SHM::Remove(int dataID)
     });
 
     //2.写入dataID后面的索引信息数据
-    TraverseIndexInfo(m_cacheIndexInfoBufForWrite, leftSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
+    traverseIndexInfo(m_cacheIndexInfoBufForWrite, leftSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
     {
         pIndexInfoToWriteStartBuf[0] = infoSize;
         pIndexInfoToWriteStartBuf[1] = _dataID;
@@ -380,7 +380,7 @@ void SHM::ListDataIDs(std::vector<int>& dataIDs)
         return;
     }
 
-    TraverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
+    traverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* blockIdxList, int blockIdxListSize) -> bool
     {
         dataIDs.push_back(_dataID);
         return true;
@@ -391,22 +391,64 @@ void SHM::ListDataIDs(std::vector<int>& dataIDs)
 
 int SHM::IsBlockUsed(int blockIdx)
 {
-	if (blockIdx >= m_blockCount)
-		return -1;
-
-    //找到仓库
-    int warehouse = -1;
-    int idxInAWarehouse = -1;
-    if (!whereInWarehouse(blockIdx, &warehouse, &idxInAWarehouse))
+    if (blockIdx >= m_blockCount || !m_pNoUsedIdxWarehouseBuf)
         return -1;
 
-    if (isBit1(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse))
-		return 0;
-	else
-		return 1;
+    m_mutex.Lock();
+
+    int ret = -1;
+    do
+    {
+        if (blockIdx >= m_blockCount)
+        {
+            ret = -1;
+			break;
+        }
+
+        //找到仓库
+        int warehouse = -1;
+        int idxInAWarehouse = -1;
+        if (!whereInWarehouse(blockIdx, &warehouse, &idxInAWarehouse))
+        {
+            ret = -1;
+            break;
+        }
+
+        if (isBit1(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse))
+        {
+            ret = 0;
+            break;
+        }
+        else
+        {
+            ret = 1;
+            break;
+        }
+    } while (false);
+    	
+	m_mutex.Unlock();
+	return ret;
 }
 
-bool SHM::TraverseIndexInfo(int* indexInfoBuf, int indexInfoBufSize, FN_IndexInfoCallback cb)
+bool SHM::TraverseIndexInfo(FN_IndexInfoCallback cb)
+{
+    if (!m_pIndexInfoBuf)
+    {
+        return false;
+    }
+
+    m_mutex.Lock();
+
+	bool ret = traverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* _blockIdxList, int blockIdxListSize) -> bool
+	{
+        return cb(infoSize, _dataID, _blockIdxList, blockIdxListSize);
+	});
+
+    m_mutex.Unlock();
+	return ret;
+}
+
+bool SHM::traverseIndexInfo(int* indexInfoBuf, int indexInfoBufSize, FN_IndexInfoCallback cb)
 {
     if (!indexInfoBuf)
         return false;
@@ -438,6 +480,32 @@ bool SHM::TraverseIndexInfo(int* indexInfoBuf, int indexInfoBufSize, FN_IndexInf
     }
 
     return false;
+}
+
+bool SHM::ListBlockIndexs(int dataID, std::vector<int>& blockIdxList)
+{
+    if (dataID >= m_blockCount || !m_pIndexInfoBuf)
+        return false;
+
+    m_mutex.Lock();
+
+    bool ret = traverseIndexInfo(m_pIndexInfoBuf, m_indexInfoBufSize, [&](int infoSize, int _dataID, int* _blockIdxList, int blockIdxListSize) -> bool
+    {
+        if (_dataID == dataID)
+        {
+            for (int i = 0; i < blockIdxListSize; i++)
+            {
+                blockIdxList.push_back(_blockIdxList[i]);
+            }
+
+            return false;
+        }
+
+        return true;
+    });
+
+	m_mutex.Unlock();
+    return ret;
 }
 
 int SHM::getNoUsedBlockIdx()
