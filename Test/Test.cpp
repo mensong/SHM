@@ -67,32 +67,14 @@ _process_thread_read(void* arg)
 
 int main(int argc, char** argv)
 {
-	__int64 num = INT64_MAX;
+	__int64 num = 0b0111111111111111111111111111111111111111111111111111111111111110;
 	//num = INT64_MAX;
 	//num = 4611686018427387904;
 	//num = 2305843009213693952;
 	__int64 lowest = num & (-num);
-
-	//int nint = 0b1111111111111111;
-	//int lowest = nint & (-nint);
-	//nint = 0b1111111111111110;
-	//lowest = nint & (-nint);
-	//nint = 0b1111111111111100;
-	//lowest = nint & (-nint);
-	//nint = 0b1111111111111000;
-	//lowest = nint & (-nint);
-	//nint = 0b1111111111110000;
-	//lowest = nint & (-nint);
-	//nint = 0b1111111111100000;
-	//lowest = nint & (-nint);
-	//nint = 0b1111111111000000;
-	//lowest = nint & (-nint);
 	
+	int ii = 64 % 63;
 	
-	int* pi = new int[100];
-	int* pi2 = pi + 8;
-
-	//return 0;
 
 	if (!shm.Init(L"mensong", 20000, 64))
 	{

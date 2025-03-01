@@ -24,7 +24,10 @@ public:
 protected:
 	void getIndeies(int dataID, std::vector<int>& idxs);
 	void getAllIndeies(std::map<int, std::vector<int>>& idxs);
-    int getNoUsedIdx(const std::map<int, std::vector<int>>& usedIdxs, int startIdx);
+    int getNoUsedIdx();
+    int getNoZeroBitNum(__int64 warehouse);
+    bool setBlockIndexUsed(int idx);
+    bool setBlockIndexNoUsed(int idx);
 
 protected:
     int m_blockCount;

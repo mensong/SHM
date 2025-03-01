@@ -116,6 +116,8 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
         m_pIndexBuf[i] = -1;
 
 	m_pNoUsedIdxWarehouseBuf = (__int64*)(m_pIndexBuf + m_indexBufSize);
+    for (int i = 0; i < m_noUsedIdxWarehouseBufSize; i++)
+        m_pNoUsedIdxWarehouseBuf[i] = 0b0111111111111111111111111111111111111111111111111111111111111111;
 
     m_pBlockBuf = (char*)(m_pNoUsedIdxWarehouseBuf + m_noUsedIdxWarehouseBufSize);
 
@@ -150,7 +152,7 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
     //写大于一个block的数据
     while (writeSize > m_blockSize)
     {
-        int newIdx = getNoUsedIdx(allIndexs, m_lastUsedIdx + 1);
+        int newIdx = getNoUsedIdx();
         if (newIdx < 0)
             return false;
 
@@ -162,11 +164,12 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
         writeSize -= m_blockSize;
         pDataToWrite += m_blockSize;
         m_lastUsedIdx = newIdx;
+		setBlockIndexUsed(newIdx);
     }
     //写小于一个block的数据
     if (writeSize > 0)
     {
-        int newIdx = getNoUsedIdx(allIndexs, m_lastUsedIdx + 1);
+        int newIdx = getNoUsedIdx();
         if (newIdx < 0)
             return false;
 
@@ -176,6 +179,7 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
         allIndexs[dataID].push_back(newIdx);
 
         m_lastUsedIdx = newIdx;
+        setBlockIndexUsed(newIdx);
     }
 
     //重写indexes data
@@ -262,8 +266,19 @@ bool SHM::Remove(int dataID)
 	std::map<int, std::vector<int>> allIndexs;
 	getAllIndeies(allIndexs);
 
+    //
+    auto itErase = allIndexs.find(dataID);
+    if (itErase == allIndexs.end())
+        return false;
+    
+	//重新设置为未使用
+	for (size_t i = 0; i < itErase->second.size(); i++)
+	{
+		setBlockIndexNoUsed(itErase->second[i]);
+	}
+
     //直接删除索引
-	allIndexs.erase(dataID);
+	allIndexs.erase(itErase);
 
 	//重写indexes data
 	int w = 0;
@@ -413,9 +428,10 @@ void SHM::getAllIndeies(std::map<int, std::vector<int>>& idxs)
     }
 }
 
-int SHM::getNoUsedIdx(const std::map<int, std::vector<int>>& usedIdxs, int startIdx)
+int SHM::getNoUsedIdx()
 {
-	DWORD t = ::GetTickCount();
+#if 0
+    DWORD t = ::GetTickCount();
 
 	int idxRet = -1;
     do
@@ -452,4 +468,205 @@ int SHM::getNoUsedIdx(const std::map<int, std::vector<int>>& usedIdxs, int start
 	times += ::GetTickCount() - t;
 
     return idxRet;
+
+#else
+
+	int idxRet = -1;
+	do
+	{
+        for (int i = 0; i < m_noUsedIdxWarehouseBufSize; i++)
+        {
+            __int64 lowest = m_pNoUsedIdxWarehouseBuf[i] & (-m_pNoUsedIdxWarehouseBuf[i]);
+            int n = getNoZeroBitNum(lowest);
+			if (n != 0)
+			{
+				idxRet = (n - 1) + (i * 63);
+                break;
+			}
+
+        }
+	} while (false);
+	return idxRet;
+
+#endif
+}
+
+int SHM::getNoZeroBitNum(__int64 warehouse)
+{
+	switch (warehouse)
+	{
+	case 0b0000000000000000000000000000000000000000000000000000000000000001:
+		return 1;
+    case 0b0000000000000000000000000000000000000000000000000000000000000010:
+        return 2;
+    case 0b0000000000000000000000000000000000000000000000000000000000000100:
+        return 3;
+    case 0b0000000000000000000000000000000000000000000000000000000000001000:
+        return 4;
+    case 0b0000000000000000000000000000000000000000000000000000000000010000:
+        return 5;
+    case 0b0000000000000000000000000000000000000000000000000000000000100000:
+        return 6;
+    case 0b0000000000000000000000000000000000000000000000000000000001000000:
+        return 7;
+    case 0b0000000000000000000000000000000000000000000000000000000010000000:
+        return 8;
+    case 0b0000000000000000000000000000000000000000000000000000000100000000:
+        return 9;
+    case 0b0000000000000000000000000000000000000000000000000000001000000000:
+        return 10;
+    case 0b0000000000000000000000000000000000000000000000000000010000000000:
+        return 11;
+    case 0b0000000000000000000000000000000000000000000000000000100000000000:
+        return 12;
+    case 0b0000000000000000000000000000000000000000000000000001000000000000:
+        return 13;
+    case 0b0000000000000000000000000000000000000000000000000010000000000000:
+        return 14;
+    case 0b0000000000000000000000000000000000000000000000000100000000000000:
+        return 15;
+    case 0b0000000000000000000000000000000000000000000000001000000000000000:
+        return 16;
+    case 0b0000000000000000000000000000000000000000000000010000000000000000:
+        return 17;
+    case 0b0000000000000000000000000000000000000000000000100000000000000000:
+        return 18;
+    case 0b0000000000000000000000000000000000000000000001000000000000000000:
+        return 19;
+    case 0b0000000000000000000000000000000000000000000010000000000000000000:
+        return 20;
+    case 0b0000000000000000000000000000000000000000000100000000000000000000:
+        return 21;
+    case 0b0000000000000000000000000000000000000000001000000000000000000000:
+        return 22;
+    case 0b0000000000000000000000000000000000000000010000000000000000000000:
+        return 23;
+    case 0b0000000000000000000000000000000000000000100000000000000000000000:
+        return 24;
+    case 0b0000000000000000000000000000000000000001000000000000000000000000:
+        return 25;
+    case 0b0000000000000000000000000000000000000010000000000000000000000000:
+        return 26;
+    case 0b0000000000000000000000000000000000000100000000000000000000000000:
+        return 27;
+    case 0b0000000000000000000000000000000000001000000000000000000000000000:
+        return 28;
+    case 0b0000000000000000000000000000000000010000000000000000000000000000:
+        return 29;
+    case 0b0000000000000000000000000000000000100000000000000000000000000000:
+        return 30;
+    case 0b0000000000000000000000000000000001000000000000000000000000000000:
+        return 31;
+    case 0b0000000000000000000000000000000010000000000000000000000000000000:
+        return 32;
+    case 0b0000000000000000000000000000000100000000000000000000000000000000:
+        return 33;
+    case 0b0000000000000000000000000000001000000000000000000000000000000000:
+        return 34;
+    case 0b0000000000000000000000000000010000000000000000000000000000000000:
+        return 35;
+    case 0b0000000000000000000000000000100000000000000000000000000000000000:
+        return 36;
+    case 0b0000000000000000000000000001000000000000000000000000000000000000:
+        return 37;
+    case 0b0000000000000000000000000010000000000000000000000000000000000000:
+        return 38;
+    case 0b0000000000000000000000000100000000000000000000000000000000000000:
+        return 39;
+    case 0b0000000000000000000000001000000000000000000000000000000000000000:
+        return 40;
+    case 0b0000000000000000000000010000000000000000000000000000000000000000:
+        return 41;
+    case 0b0000000000000000000000100000000000000000000000000000000000000000:
+        return 42;
+    case 0b0000000000000000000001000000000000000000000000000000000000000000:
+        return 43;
+    case 0b0000000000000000000010000000000000000000000000000000000000000000:
+        return 44;
+    case 0b0000000000000000000100000000000000000000000000000000000000000000:
+        return 45;
+    case 0b0000000000000000001000000000000000000000000000000000000000000000:
+        return 46;
+    case 0b0000000000000000010000000000000000000000000000000000000000000000:
+        return 47;
+    case 0b0000000000000000100000000000000000000000000000000000000000000000:
+        return 48;
+    case 0b0000000000000001000000000000000000000000000000000000000000000000:
+        return 49;
+    case 0b0000000000000010000000000000000000000000000000000000000000000000:
+        return 50;
+    case 0b0000000000000100000000000000000000000000000000000000000000000000:
+        return 51;
+    case 0b0000000000001000000000000000000000000000000000000000000000000000:
+        return 52;
+    case 0b0000000000010000000000000000000000000000000000000000000000000000:
+        return 53;
+    case 0b0000000000100000000000000000000000000000000000000000000000000000:
+        return 54;
+    case 0b0000000001000000000000000000000000000000000000000000000000000000:
+        return 55;
+    case 0b0000000010000000000000000000000000000000000000000000000000000000:
+        return 56;
+    case 0b0000000100000000000000000000000000000000000000000000000000000000:
+        return 57;
+    case 0b0000001000000000000000000000000000000000000000000000000000000000:
+        return 58;
+    case 0b0000010000000000000000000000000000000000000000000000000000000000:
+        return 59;
+    case 0b0000100000000000000000000000000000000000000000000000000000000000:
+        return 60;
+    case 0b0001000000000000000000000000000000000000000000000000000000000000:
+        return 61;
+    case 0b0010000000000000000000000000000000000000000000000000000000000000:
+        return 62;
+    case 0b0100000000000000000000000000000000000000000000000000000000000000:
+        return 63;
+    //case 0b1000000000000000000000000000000000000000000000000000000000000000:
+	//    return 64;//最后一个bit用于正负标志，不使用
+	default:
+		break;
+	}
+    return 0;
+}
+
+__int64 setBit0(__int64 num, int pos) 
+{
+    return num & ~(1ULL << pos);
+}
+__int64 setBit1(__int64 num, int pos) 
+{
+    return num | (1ULL << pos);
+}
+
+
+bool SHM::setBlockIndexUsed(int idx)
+{
+    if (idx < 0 || idx >= m_blockCount)
+        return false;
+
+	int warehouse = idx / 63;
+    if (warehouse >= m_noUsedIdxWarehouseBufSize)
+		return false;
+
+    int idxInAWarehouse = idx % 63;
+    m_pNoUsedIdxWarehouseBuf[warehouse] = 
+        setBit0(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
+
+    return true;
+}
+
+bool SHM::setBlockIndexNoUsed(int idx)
+{
+    if (idx < 0 || idx >= m_blockCount)
+        return false;
+
+    int warehouse = idx / 63;
+    if (warehouse >= m_noUsedIdxWarehouseBufSize)
+        return false;
+
+    int idxInAWarehouse = idx % 63;
+    m_pNoUsedIdxWarehouseBuf[warehouse] =
+        setBit1(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
+
+    return true;
 }
