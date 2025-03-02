@@ -1,5 +1,4 @@
 #include "shm.h"
-#include <set>
 
 __int64 setBit0(__int64 num, int pos)
 {
