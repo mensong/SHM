@@ -25,10 +25,8 @@ public:
 
     void ListDataIDs(std::vector<int>& dataIDs);
 
-#if 0
 	//-1:出错；0:未使用；1:已使用
 	int IsBlockUsed(int blockIdx);
-#endif
 
 protected:
     //获得未使用的块序号，返回-1表示已经没有块可以使用
@@ -57,25 +55,10 @@ protected:
 
 	__int64* m_pNoUsedIdxWarehouseBuf;
     int m_noUsedIdxWarehouseBufSize;
-#if 0
     bool whereInWarehouse(int blockIdx, int* warehouseIdx, int* idxInAWarehouse);
-#endif
 
 	char* m_pBlockBuf;
 
     GlobalMutex m_mutex;
-
-#pragma region bitmap_allocation
-#define BITMAP_BLOCK_SIZE 64          // 每个块管理64个分区
-    uint64_t* m_bitmap_blocks;   // 动态分配位图数组
-    uint64_t m_meta_bitmap;
-
-    void init_partition_manager();
-    void mark_partition_used(int global_idx);
-    void mark_partition_unused(int global_idx);
-    int find_unused_partition();
-    void uninit_partition_manager();
-#pragma endregion
-
 };
 

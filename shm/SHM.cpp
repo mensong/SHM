@@ -17,14 +17,12 @@ SHM::SHM()
     : m_hMapFile(NULL)
     , m_pBuf(NULL)
 	, m_pIndexInfoBuf(NULL)
-	, m_pBlockBuf(NULL)
     , m_indexInfoBufSize(0)
     , m_pNoUsedIdxWarehouseBuf(NULL)
 	, m_noUsedIdxWarehouseBufSize(0)
-    , m_blockCount(100)
-    , m_blockSize(512)
-    , m_bitmap_blocks(NULL)
-    , m_meta_bitmap (0)  // 每一位表示对应块是否有空闲分区（0=无，1=有）
+    , m_pBlockBuf(NULL)
+    , m_blockCount(0)
+    , m_blockSize(0)
 {
 }
 
@@ -47,8 +45,6 @@ SHM::~SHM()
         m_hMapFile = NULL;
     }
     
-    uninit_partition_manager();
-
     m_mutex.Unlock();
 }
 
@@ -145,8 +141,6 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
     lstrcat(dataLockName, TEXT("Data_"));
     lstrcat(dataLockName, shmName);
     m_mutex.Init(dataLockName);
-
-    init_partition_manager();
 
     return true;
 }
@@ -322,7 +316,6 @@ void SHM::ListDataIDs(std::vector<int>& dataIDs)
     m_mutex.Unlock();
 }
 
-#if 0
 int SHM::IsBlockUsed(int blockIdx)
 {
     if (blockIdx >= m_blockCount || !m_pNoUsedIdxWarehouseBuf)
@@ -363,11 +356,9 @@ int SHM::IsBlockUsed(int blockIdx)
 	m_mutex.Unlock();
 	return ret;
 }
-#endif
 
 int SHM::getNoUsedBlockIdx()
 {
-#if 0
 	int idxRet = -1;
 	do
 	{
@@ -386,9 +377,6 @@ int SHM::getNoUsedBlockIdx()
     if (idxRet >= m_blockCount)
 		idxRet = -1;
 	return idxRet;
-#else
-    return find_unused_partition();
-#endif
 }
 
 int SHM::getLowestNoZeroBitIndex(__int64 warehouse)
@@ -533,7 +521,6 @@ int SHM::getLowestNoZeroBitIndex(__int64 warehouse)
 
 bool SHM::setBlockIndexUsed(int blockIdx)
 {
-#if 0
     int warehouse = -1;
     int idxInAWarehouse = -1;
     if (!whereInWarehouse(blockIdx, &warehouse, &idxInAWarehouse))
@@ -543,15 +530,10 @@ bool SHM::setBlockIndexUsed(int blockIdx)
         setBit0(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
 
     return true;
-#else
-    mark_partition_used(blockIdx);
-    return true;
-#endif
 }
 
 bool SHM::setBlockIndexNoUsed(int blockIdx)
 {
-#if 0
     int warehouse = -1;
     int idxInAWarehouse = -1;
     if (!whereInWarehouse(blockIdx, &warehouse, &idxInAWarehouse))
@@ -561,10 +543,6 @@ bool SHM::setBlockIndexNoUsed(int blockIdx)
         setBit1(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
 
     return true;
-#else
-    mark_partition_unused(blockIdx);
-    return true;
-#endif
 }
 
 bool SHM::traverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb)
@@ -596,7 +574,6 @@ bool SHM::traverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb)
     return true;
 }
 
-#if 0
 bool SHM::whereInWarehouse(int blockIdx, int* warehouseIdx, int* idxInAWarehouse)
 {
     if (blockIdx < 0 || blockIdx >= m_blockCount)
@@ -611,72 +588,4 @@ bool SHM::whereInWarehouse(int blockIdx, int* warehouseIdx, int* idxInAWarehouse
     *idxInAWarehouse = blockIdx % 63;
 
     return true;
-}
-#endif
-
-void SHM::init_partition_manager()
-{
-    int group64Count = (m_blockCount + BITMAP_BLOCK_SIZE - 1) / BITMAP_BLOCK_SIZE;
-    m_bitmap_blocks = (uint64_t*)calloc(group64Count, sizeof(uint64_t));
-    m_meta_bitmap = (1ULL << group64Count) - 1;  // 初始所有块均有空闲
-}
-
-void SHM::mark_partition_used(int global_idx)
-{
-    int bitmap_block_idx = global_idx / BITMAP_BLOCK_SIZE;
-    int bit_pos = global_idx % BITMAP_BLOCK_SIZE;
-    m_bitmap_blocks[bitmap_block_idx] |= (1ULL << bit_pos);
-
-    // 若块已满，清除元位图中的标记
-    if (m_bitmap_blocks[bitmap_block_idx] == UINT64_MAX) 
-    {
-        m_meta_bitmap &= ~(1ULL << bitmap_block_idx);
-    }
-}
-
-void SHM::mark_partition_unused(int global_idx)
-{
-    int bitmap_block_idx = global_idx / BITMAP_BLOCK_SIZE;
-    int bit_pos = global_idx % BITMAP_BLOCK_SIZE;
-    m_bitmap_blocks[bitmap_block_idx] &= ~(1ULL << bit_pos);
-
-    // 更新元位图标记
-    m_meta_bitmap |= (1ULL << bitmap_block_idx);
-}
-
-int SHM::find_unused_partition()
-{
-    // 步骤1: 在元位图中快速定位有空闲的块
-    uint64_t meta_mask = m_meta_bitmap;
-    while (meta_mask != 0) 
-    {
-        unsigned long idx = 0;
-        _BitScanForward64(&idx, meta_mask);  // 找到第一个非0位
-        int block_idx = idx;
-        meta_mask ^= (1ULL << block_idx);                // 清除已检查的块标记
-
-        // 步骤2: 在目标块内查找具体空闲位
-        uint64_t block = m_bitmap_blocks[block_idx];
-        uint64_t inverted_block = ~block;
-        if (inverted_block != 0) 
-        {
-            unsigned long idx = 0;
-            _BitScanForward64(&idx, inverted_block);
-            int bit_pos = idx;
-            int global_idx = block_idx * BITMAP_BLOCK_SIZE + bit_pos;
-            if (global_idx >= m_blockCount)
-                global_idx = -1;
-            return global_idx;  // 返回全局分区索引
-        }
-    }
-    return -1;  // 无可用分区
-}
-
-void SHM::uninit_partition_manager()
-{
-    //if (m_bitmap_blocks)
-    //{
-    //    free(m_bitmap_blocks);
-    //    m_bitmap_blocks = NULL;
-    //}
 }
