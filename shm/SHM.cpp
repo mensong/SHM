@@ -16,6 +16,7 @@ bool isBit1(__int64 num, int pos)
 SHM::SHM()
     : m_hMapFile(NULL)
     , m_pBuf(NULL)
+    , m_pMetaDataBuf(NULL)
 	, m_pIndexInfoBuf(NULL)
     , m_indexInfoBufSize(0)
     , m_pNoUsedIdxWarehouseBuf(NULL)
@@ -60,8 +61,11 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
     m_blockCount = blockCount;
     m_blockSize = blockSize;
 
+    //元数据所需空间：BlockCount + BlockSize
+    int metaDataSize = 2;//blockCount|blockSize
+
     //索引所需的空间
-    m_indexInfoBufSize = 1 + m_blockCount;//例子：blockCount|(startBlockIdx0)0|(startBlockIdx1)3|(startBlockIdx2)5
+    m_indexInfoBufSize = m_blockCount;//例子：(startBlockIdx0)0|(startBlockIdx1)3|(startBlockIdx2)5
  
 	//索引仓库所需空间的块数（多少个int64）。
     // 使用多个int64来存储，每个int64存储64个bit，每个bit代表一个block的索引号是否被使用，使用了设置为0，未使用设置为1。
@@ -72,6 +76,7 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
 
     LARGE_INTEGER allocSize;
     allocSize.QuadPart =
+		metaDataSize * sizeof(int) +
         m_indexInfoBufSize * sizeof(int) + //block索引号空间大小
         m_noUsedIdxWarehouseBufSize * sizeof(__int64) + //block未使用的索引号空间大小
         //thisBlockDataSize+ data + nextBlockIdx 
@@ -120,14 +125,23 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
         memset(m_pBuf, 0, allocSize.QuadPart);
     }
 
-	m_pIndexInfoBuf = (int*)m_pBuf;
+    //元数据区
+    m_pMetaDataBuf = (int*)m_pBuf;
     if (created)
     {
-        m_pIndexInfoBuf[0] = blockCount;//写blockCount
-        for (int i = 1; i < m_indexInfoBufSize; i++)
+        m_pMetaDataBuf[0] = blockCount;
+        m_pMetaDataBuf[1] = blockSize;
+    }
+
+    //索引区
+	m_pIndexInfoBuf = (int*)(m_pMetaDataBuf + metaDataSize);
+    if (created)
+    {
+        for (int i = 0; i < m_indexInfoBufSize; i++)
             m_pIndexInfoBuf[i] = -1;
     }
 
+    //未使用块记录区
 	m_pNoUsedIdxWarehouseBuf = (__int64*)(m_pIndexInfoBuf + m_indexInfoBufSize);
     if (created)
     {
@@ -135,6 +149,7 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
             m_pNoUsedIdxWarehouseBuf[i] = 0b0111111111111111111111111111111111111111111111111111111111111111;
     }
 
+    //数据区
     m_pBlockBuf = (char*)(m_pNoUsedIdxWarehouseBuf + m_noUsedIdxWarehouseBufSize);
 
     TCHAR dataLockName[MAX_PATH] = TEXT("");
@@ -147,154 +162,62 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
 
 bool SHM::Write(const char* pData, int dataSize, int dataID)
 {
-    if (dataID >= m_blockCount)
-        return false;
+    m_mutex.Lock();
+    bool b = write(pData, dataSize, dataID);
+    m_mutex.Unlock();
+    return b;
+}
 
+int SHM::AppendWrite(const char* pData, int dataSize)
+{
     m_mutex.Lock();
 
-    if (!m_pIndexInfoBuf || !m_pBlockBuf)
+    int dataIDCreated = -1;
+    do
     {
-        m_mutex.Unlock();
-        return false;
-    }
+        if (!m_pIndexInfoBuf)
+            break;
 
-    //先把dataID旧所用到的blockIdx设为可用（如果有）
-    traverseBlockIdx(dataID, [&](int blockIdx)->bool {
-        setBlockIndexNoUsed(blockIdx);
-        return true;
-    });
+        for (int i = 0; i < m_blockCount; i++)
+        {
+            if (m_pIndexInfoBuf[i] < 0)
+            {
+                dataIDCreated = i;
+                break;
+            }
+        }
+        if (dataIDCreated < 0)
+            break;
 
-    int headIdx = -1;
-    char* pLastMMWrite = NULL;
-    const char* pDataToWrite = pData;
-    int writeSize = dataSize;
-    int endIdx = -1;
-
-    //写大于一个block的数据
-    while (writeSize > m_blockSize)
-    {
-        int newIdx = getNoUsedBlockIdx();
-        if (newIdx < 0)
-            return false;
-        if (headIdx == -1)
-            headIdx = newIdx;
-
-        //节点间的连接序号
-        if (pLastMMWrite)
-            memcpy(pLastMMWrite, (const void*)&newIdx, sizeof(int));
-
-		char* p = m_pBlockBuf + (newIdx * (sizeof(int) + m_blockSize + sizeof(int)));//dataSize+data+nextIdx
-        memcpy(p, (const void*)&m_blockSize, sizeof(int));
-        p += sizeof(int);
-        memcpy(p, pDataToWrite, m_blockSize);
-        p += m_blockSize;
-        pLastMMWrite = p;
-
-        setBlockIndexUsed(newIdx);
-
-        writeSize -= m_blockSize;
-        pDataToWrite += m_blockSize;		
-    }
-    //写小于一个block的数据
-    if (writeSize > 0)
-    {
-        int newIdx = getNoUsedBlockIdx();
-        if (newIdx < 0)
-            return false;
-        if (headIdx == -1)
-            headIdx = newIdx;
-
-        //节点间的连接序号
-        if (pLastMMWrite)
-            memcpy(pLastMMWrite, (const void*)&newIdx, sizeof(int));
-
-        char* p = m_pBlockBuf + (newIdx * (sizeof(int) + m_blockSize + sizeof(int)));//dataSize+data+nextIdx
-        memcpy(p, (const void*)&writeSize, sizeof(int));
-        p += sizeof(int);
-        memcpy(p, pDataToWrite, writeSize);
-        p += writeSize;
-        pLastMMWrite = p;
-        memcpy(pLastMMWrite, (const void*)&endIdx, sizeof(int));//结束时写-1表示已经是结束block
-
-        setBlockIndexUsed(newIdx);
-    }
-
-	//写index info
-	m_pIndexInfoBuf[1 + dataID] = headIdx;//1：扣除最前面的blockCount
+        if (!write(pData, dataSize, dataIDCreated))
+        {
+            dataIDCreated = -1;
+            break;
+        }
+    } while (false);
 
     m_mutex.Unlock();
-    return headIdx != -1;
+    return dataIDCreated;
 }
 
 int SHM::Read(char* pOutBuf, int outBufSize, int dataID)
 {
-    if (dataID >= m_blockCount)
-        return -1;
-
     m_mutex.Lock();
 
-    if (!m_pIndexInfoBuf || !m_pBlockBuf)
-    {
-        m_mutex.Unlock();
-        return -1;
-    }
-
-    int headBlockIdx = m_pIndexInfoBuf[1 + dataID];
-    if (headBlockIdx < 0 || headBlockIdx >= m_blockCount)
-        return -1;
-
-	int dataSizeTotal = 0;
-    int blockIdx = headBlockIdx;
-    while (blockIdx > -1)
-    {
-        char* pBlock = m_pBlockBuf + (blockIdx * (sizeof(int) + m_blockSize + sizeof(int)));
-        int dataSize = *((int*)pBlock);    //当前block中存储的数据长度
-        char* pData = pBlock + sizeof(int);//数据开始位置
-        blockIdx = *((int*)(pData + dataSize));//下一个数据位置
-
-        if (pOutBuf && outBufSize > 0)
-        {
-            int readSize = min(dataSize, outBufSize);
-            memcpy(pOutBuf + dataSizeTotal, pData, readSize);
-
-            if (outBufSize <= dataSize)
-            {//已读完
-                //pOutBuf += readSize;
-                dataSizeTotal += readSize;
-                break;
-            }
-
-            outBufSize -= readSize;
-        }
-
-        dataSizeTotal += dataSize;
-    }
+    int readsize = read(pOutBuf, outBufSize, dataID);
             
     m_mutex.Unlock();
-	return dataSizeTotal;
+	return readsize;
 }
 
 bool SHM::Remove(int dataID)
 {
-	if (dataID >= m_blockCount)
-		return false;
-
 	m_mutex.Lock();
 
-    if (!m_pIndexInfoBuf)
-    {
-        m_mutex.Unlock();
-        return false;
-    }
-    
-    //移除indexinfo
-    int blockIdx = m_pIndexInfoBuf[1 + dataID];
-	if (blockIdx != -1)
-		setBlockIndexNoUsed(blockIdx);
-    m_pIndexInfoBuf[1 + dataID] = -1;
+    bool b = remove(dataID);
 
 	m_mutex.Unlock();
-    return true;
+    return b;
 }
 
 void SHM::ListDataIDs(std::vector<int>& dataIDs)
@@ -309,8 +232,8 @@ void SHM::ListDataIDs(std::vector<int>& dataIDs)
 
     for (int i = 0; i < m_blockCount; i++)
     {
-        if (m_pIndexInfoBuf[1 + i] >= 0)
-            dataIDs.push_back(m_pIndexInfoBuf[1 + i]);
+        if (m_pIndexInfoBuf[i] >= 0)
+            dataIDs.push_back(m_pIndexInfoBuf[i]);
     }
 
     m_mutex.Unlock();
@@ -363,6 +286,178 @@ bool SHM::TraverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb)
     bool b = traverseBlockIdx(dataID, cb);
     m_mutex.Unlock();
     return b;
+}
+
+bool SHM::write(const char* pData, int dataSize, int dataID)
+{
+    if (dataID >= m_blockCount)
+        return false;
+
+    if (!m_pIndexInfoBuf || !m_pBlockBuf)
+    {
+        m_mutex.Unlock();
+        return false;
+    }
+
+    //先把dataID旧所用到的blockIdx设为可用（如果有）
+    traverseBlockIdx(dataID, [&](int blockIdx)->bool {
+        setBlockIndexNoUsed(blockIdx);
+        return true;
+    });
+
+    int headIdx = -1;
+    char* pLastMMWrite = NULL;
+    const char* pDataToWrite = pData;
+    int writeSize = dataSize;
+    int endIdx = -1;
+
+    //写大于一个block的数据
+    while (writeSize > m_blockSize)
+    {
+        int newIdx = getNoUsedBlockIdx();
+        if (newIdx < 0)
+            return false;
+        if (headIdx == -1)
+            headIdx = newIdx;
+
+        //节点间的连接序号
+        if (pLastMMWrite)
+            memcpy(pLastMMWrite, (const void*)&newIdx, sizeof(int));
+
+        char* p = m_pBlockBuf + (newIdx * (sizeof(int) + m_blockSize + sizeof(int)));//dataSize+data+nextIdx
+        memcpy(p, (const void*)&m_blockSize, sizeof(int));
+        p += sizeof(int);
+        memcpy(p, pDataToWrite, m_blockSize);
+        p += m_blockSize;
+        pLastMMWrite = p;
+
+        setBlockIndexUsed(newIdx);
+
+        writeSize -= m_blockSize;
+        pDataToWrite += m_blockSize;
+    }
+    //写小于一个block的数据
+    if (writeSize > 0)
+    {
+        int newIdx = getNoUsedBlockIdx();
+        if (newIdx < 0)
+            return false;
+        if (headIdx == -1)
+            headIdx = newIdx;
+
+        //节点间的连接序号
+        if (pLastMMWrite)
+            memcpy(pLastMMWrite, (const void*)&newIdx, sizeof(int));
+
+        char* p = m_pBlockBuf + (newIdx * (sizeof(int) + m_blockSize + sizeof(int)));//dataSize+data+nextIdx
+        memcpy(p, (const void*)&writeSize, sizeof(int));
+        p += sizeof(int);
+        memcpy(p, pDataToWrite, writeSize);
+        p += writeSize;
+        pLastMMWrite = p;
+        memcpy(pLastMMWrite, (const void*)&endIdx, sizeof(int));//结束时写-1表示已经是结束block
+
+        setBlockIndexUsed(newIdx);
+    }
+
+    //写index info
+    m_pIndexInfoBuf[dataID] = headIdx;
+
+    return headIdx != -1;
+}
+
+int SHM::read(char* pOutBuf, int outBufSize, int dataID)
+{
+    if (dataID >= m_blockCount)
+        return -1;
+
+    if (!m_pIndexInfoBuf || !m_pBlockBuf)
+    {
+        m_mutex.Unlock();
+        return -1;
+    }
+
+    int headBlockIdx = m_pIndexInfoBuf[dataID];
+    if (headBlockIdx < 0 || headBlockIdx >= m_blockCount)
+        return -1;
+
+    int dataSizeTotal = 0;
+    int blockIdx = headBlockIdx;
+    for (int i = 0; i < m_blockCount && blockIdx > -1; i++)
+    {
+        char* pBlock = m_pBlockBuf + (blockIdx * (sizeof(int) + m_blockSize + sizeof(int)));
+        int dataSize = *((int*)pBlock);    //当前block中存储的数据长度
+        char* pData = pBlock + sizeof(int);//数据开始位置
+        blockIdx = *((int*)(pData + dataSize));//下一个数据位置
+
+        if (pOutBuf && outBufSize > 0)
+        {
+            int readSize = min(dataSize, outBufSize);
+            memcpy(pOutBuf + dataSizeTotal, pData, readSize);
+
+            if (outBufSize <= dataSize)
+            {//已读完
+                //pOutBuf += readSize;
+                dataSizeTotal += readSize;
+                break;
+            }
+
+            outBufSize -= readSize;
+        }
+
+        dataSizeTotal += dataSize;
+    }
+
+    return dataSizeTotal;
+}
+
+bool SHM::remove(int dataID)
+{
+    if (dataID >= m_blockCount)
+        return false;
+
+    if (!m_pIndexInfoBuf)
+    {
+        m_mutex.Unlock();
+        return false;
+    }
+
+    //移除indexinfo
+    int blockIdx = m_pIndexInfoBuf[dataID];
+    if (blockIdx != -1)
+        setBlockIndexNoUsed(blockIdx);
+    m_pIndexInfoBuf[dataID] = -1;
+
+    return true;
+}
+
+bool SHM::traverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb)
+{
+    if (dataID >= m_blockCount)
+        return false;
+
+    if (!m_pIndexInfoBuf || !m_pBlockBuf)
+    {
+        return false;
+    }
+
+    int headBlockIdx = m_pIndexInfoBuf[dataID];
+    if (headBlockIdx < 0 || headBlockIdx >= m_blockCount)
+        return false;
+
+    int blockIdx = headBlockIdx;
+    for (int i = 0; i < m_blockCount && blockIdx > -1; i++)
+    {
+        if (!cb(blockIdx))
+            return true;
+
+        char* pBlock = m_pBlockBuf + (blockIdx * (sizeof(int) + m_blockSize + sizeof(int)));
+        int dataSize = *((int*)pBlock);    //当前block中存储的数据长度
+        char* pData = pBlock + sizeof(int);//数据开始位置
+        blockIdx = *((int*)(pData + dataSize));//下一个数据位置
+    }
+
+    return true;
 }
 
 int SHM::getNoUsedBlockIdx()
@@ -549,35 +644,6 @@ bool SHM::setBlockIndexNoUsed(int blockIdx)
 
     m_pNoUsedIdxWarehouseBuf[warehouse] =
         setBit1(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
-
-    return true;
-}
-
-bool SHM::traverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb)
-{
-    if (dataID >= m_blockCount)
-        return false;
-
-    if (!m_pIndexInfoBuf || !m_pBlockBuf)
-    {
-        return false;
-    }
-
-    int headBlockIdx = m_pIndexInfoBuf[1 + dataID];
-    if (headBlockIdx < 0 || headBlockIdx >= m_blockCount)
-        return false;
-
-    int blockIdx = headBlockIdx;
-    while (blockIdx > -1)
-    {
-        if (!cb(blockIdx))
-            return true;
-
-        char* pBlock = m_pBlockBuf + (blockIdx * (sizeof(int) + m_blockSize + sizeof(int)));
-        int dataSize = *((int*)pBlock);    //当前block中存储的数据长度
-        char* pData = pBlock + sizeof(int);//数据开始位置
-        blockIdx = *((int*)(pData + dataSize));//下一个数据位置
-    }
 
     return true;
 }

@@ -21,6 +21,9 @@ public:
 
     bool Write(const char* pData, int dataSize, int dataID);
 
+    //添加一个数据，并返回dataID
+    int AppendWrite(const char* pData, int dataSize);
+
     //可传入pOutBuf=NULL时获得数据长度。
     int Read(char* pOutBuf, int outBufSize, int dataID);
 
@@ -44,6 +47,9 @@ protected:
     //设置块序号为未使用
     bool setBlockIndexNoUsed(int blockIdx);
 
+    bool write(const char* pData, int dataSize, int dataID);
+    int read(char* pOutBuf, int outBufSize, int dataID);
+    bool remove(int dataID);
     //遍历dataID的用到的blockIdx
     bool traverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb);
 
@@ -54,6 +60,8 @@ protected:
     HANDLE m_hMapFile;
 
     char* m_pBuf;
+
+    int* m_pMetaDataBuf;
 
     int* m_pIndexInfoBuf;
     int m_indexInfoBufSize;

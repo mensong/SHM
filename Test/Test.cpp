@@ -178,7 +178,7 @@ int main(int argc, char** argv)
 	//return 0;
 
 
-	if (!shm.Init(L"mensong", 200002, 64))
+	if (!shm.Init(L"mensong", 20002, 64))
 	{
 		std::cout << "Init error." << std::endl;
 		return -1;
@@ -186,7 +186,25 @@ int main(int argc, char** argv)
 
 	std::cout << "正在测试单线程读写中..." << std::endl;
 
-	int testCount = 100000;
+	int testCount = 10000;
+
+	{
+		DWORD st = ::GetTickCount();
+		for (int i = 0; i < testCount; i++)
+		{
+			int dataID = shm.AppendWrite(pIn, pInLen);
+			if (dataID < 0)
+			{
+				std::cout << "增加数据出错:" << i << std::endl;
+			}
+		}
+		DWORD t = ::GetTickCount() - st;
+		std::cout << "AppendWrite " << testCount << "次耗时:" << t << "毫秒" << std::endl;
+		std::string sSpeed = (t == 0 ?
+			("大于" + std::to_string(testCount)) :
+			std::to_string((double)testCount / (t / 1000.0)));
+		std::cout << "Write 速度:" << sSpeed << " 次/秒" << std::endl;
+	}
 
 	auto testWriteFunc = [&]()->void
 	{
