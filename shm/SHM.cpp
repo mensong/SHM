@@ -357,6 +357,14 @@ int SHM::IsBlockUsed(int blockIdx)
 	return ret;
 }
 
+bool SHM::TraverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb)
+{
+    m_mutex.Lock();
+    bool b = traverseBlockIdx(dataID, cb);
+    m_mutex.Unlock();
+    return b;
+}
+
 int SHM::getNoUsedBlockIdx()
 {
 	int idxRet = -1;

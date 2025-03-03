@@ -11,6 +11,9 @@ blockCount(3) startBlockIdx startBlockIdx startBlockIdx|unused indexs bits|block
 class SHM
 {
 public:
+    typedef std::function<bool(int blockIdx)> FN_TraverseBlockIdxCallback;
+
+public:
     SHM();
     ~SHM();
 
@@ -28,6 +31,9 @@ public:
 	//-1:出错；0:未使用；1:已使用
 	int IsBlockUsed(int blockIdx);
 
+    //遍历dataID的用到的blockIdx
+    bool TraverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb);
+
 protected:
     //获得未使用的块序号，返回-1表示已经没有块可以使用
     int getNoUsedBlockIdx();
@@ -39,7 +45,6 @@ protected:
     bool setBlockIndexNoUsed(int blockIdx);
 
     //遍历dataID的用到的blockIdx
-    typedef std::function<bool(int blockIdx)> FN_TraverseBlockIdxCallback;
     bool traverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb);
 
 protected:
