@@ -38,9 +38,13 @@ public:
     bool ListBlockIndexs(int dataID, std::vector<int>& blockIdxList);
 
 protected:
+    //获得未使用的块序号，返回-1表示已经没有块可以使用
     int getNoUsedBlockIdx();
-    int getNoZeroBitNum(__int64 warehouse);
+    //获得一个__int64数的最低的非0位序号，例如0b0001返回0，0b0010返回1
+    int getLowestNoZeroBitIndex(__int64 warehouse);
+    //设置块序号为已使用
     bool setBlockIndexUsed(int blockIdx);
+    //设置块序号为未使用
     bool setBlockIndexNoUsed(int blockIdx);
     //遍历索引信息
     bool traverseIndexInfo(int* indexInfoBuf, int indexInfoBufSize, FN_IndexInfoCallback cb);
