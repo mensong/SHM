@@ -45,6 +45,11 @@ SHM::~SHM()
         CloseHandle(m_hMapFile);
         m_hMapFile = NULL;
     }
+    if (m_cacheIndexInfoBufForWrite)
+    {
+        delete[] m_cacheIndexInfoBufForWrite;
+        m_cacheIndexInfoBufForWrite = NULL;
+    }
 
     m_mutex.Unlock();
 }
