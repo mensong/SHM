@@ -3,16 +3,13 @@
 #include <vector>
 #include <functional>
 #include "GlobalMutex.h"
+
 /*
-size(3) dataID idx1 idx2 size(1) idx3 size(1) idx4 INT_MIN|unused indexs bits|blockSize blockData|blockSize blockData|blockSize blockData|blockSize blockData
-|------------------------索引区域-------------------------|  未使用的索引位  |----------------------------------数据区域-------------------------------------|
+blockCount(3) startBlockIdx startBlockIdx startBlockIdx|unused indexs bits|blockSize blockData nextBlockIdx|blockSize blockData nextBlockIdx|blockSize blockData nextBlockIdx
+|-----------------------索引区域-----------------------|  未使用的索引位  |-------------------------------------------数据区域-----------------------------------------------|
 */
 class SHM
 {
-public:
-    //遍历索引信息的回调，返回false则中断遍历。
-    typedef std::function<bool(int infoSize, int dataID, int* blockIdxList, int blockIdxListSize)> FN_IndexInfoCallback;
-
 public:
     SHM();
     ~SHM();
@@ -28,14 +25,10 @@ public:
 
     void ListDataIDs(std::vector<int>& dataIDs);
 
+#if 0
 	//-1:出错；0:未使用；1:已使用
 	int IsBlockUsed(int blockIdx);
-
-    //遍历索引信息
-    bool TraverseIndexInfo(FN_IndexInfoCallback cb);
-
-    //获得dataID所用到的BlockIdx列表
-    bool ListBlockIndexs(int dataID, std::vector<int>& blockIdxList);
+#endif
 
 protected:
     //获得未使用的块序号，返回-1表示已经没有块可以使用
@@ -46,8 +39,10 @@ protected:
     bool setBlockIndexUsed(int blockIdx);
     //设置块序号为未使用
     bool setBlockIndexNoUsed(int blockIdx);
-    //遍历索引信息
-    bool traverseIndexInfo(int* indexInfoBuf, int indexInfoBufSize, FN_IndexInfoCallback cb);
+
+    //遍历dataID的用到的blockIdx
+    typedef std::function<bool(int blockIdx)> FN_TraverseBlockIdxCallback;
+    bool traverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb);
 
 protected:
     int m_blockCount;
@@ -57,16 +52,30 @@ protected:
 
     char* m_pBuf;
 
-	int* m_pIndexInfoBuf;
+    int* m_pIndexInfoBuf;
     int m_indexInfoBufSize;
-    int* m_cacheIndexInfoBufForWrite;
 
 	__int64* m_pNoUsedIdxWarehouseBuf;
     int m_noUsedIdxWarehouseBufSize;
+#if 0
     bool whereInWarehouse(int blockIdx, int* warehouseIdx, int* idxInAWarehouse);
+#endif
 
 	char* m_pBlockBuf;
 
     GlobalMutex m_mutex;
+
+#pragma region bitmap_allocation
+#define BITMAP_BLOCK_SIZE 64          // 每个块管理64个分区
+    uint64_t* m_bitmap_blocks;   // 动态分配位图数组
+    uint64_t m_meta_bitmap;
+
+    void init_partition_manager();
+    void mark_partition_used(int global_idx);
+    void mark_partition_unused(int global_idx);
+    int find_unused_partition();
+    void uninit_partition_manager();
+#pragma endregion
+
 };
 
