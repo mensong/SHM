@@ -52,7 +52,7 @@ _process_thread_read(void* arg)
 		//	break;
 
 		int n = shm.Read(NULL, 0, 0);
-		if (n == 0)
+		if (n <= 0)
 		{
 			std::cout << "读取出错" << std::endl;
 			continue;
@@ -178,15 +178,14 @@ int main(int argc, char** argv)
 	//return 0;
 
 
-	if (!shm.Init(L"mensong", 20002, 64))
+	int testCount = 100000;
+	if (!shm.Init(L"mensong", 200000, 64))
 	{
 		std::cout << "Init error." << std::endl;
 		return -1;
 	}
 
 	std::cout << "正在测试单线程读写中..." << std::endl;
-
-	int testCount = 10000;
 
 	{
 		DWORD st = ::GetTickCount();
@@ -219,17 +218,18 @@ int main(int argc, char** argv)
 			{
 				std::cout << "写数据出错:" << i << std::endl;
 			}
-
-			//pRead[0] = 0;
-			//b = shm.Read(pRead, pInLen, i);
-			//if (!b)
-			//{
-			//	std::cout << "读数据出错:" << i << std::endl;
-			//}
-			//else if (strcmp(pIn, pRead) != 0)
-			//{
-			//	std::cout << "读写数据出错:" << i << std::endl;
-			//}
+#if 1
+			pRead[0] = 0;
+			b = shm.Read(pRead, pInLen, i);
+			if (!b)
+			{
+				std::cout << "读数据出错:" << i << std::endl;
+			}
+			else if (strcmp(pIn, pRead) != 0)
+			{
+				std::cout << "读写数据出错:" << i << std::endl;
+			}
+#endif
 		}
 		DWORD t = ::GetTickCount() - st;
 		std::cout << "Write " << testCount << "次耗时:" << t << "毫秒" << std::endl;
@@ -254,7 +254,7 @@ int main(int argc, char** argv)
 		for (size_t i = 0; i < testCount; i++)
 		{
 			int n = shm.Read(NULL, 0, i);
-			if (n == 0)
+			if (n <= 0)
 			{
 				std::cout << "读取出错" << std::endl;
 				continue;

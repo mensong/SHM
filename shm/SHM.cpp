@@ -1,14 +1,14 @@
 #include "shm.h"
 
-__int64 setBit0(__int64 num, int pos)
+void setBit0(unsigned __int64& num, int pos)
 {
-    return num & ~(1ULL << pos);
+    num &= ~(1ULL << pos);
 }
-__int64 setBit1(__int64 num, int pos)
+void setBit1(unsigned __int64& num, int pos)
 {
-    return num | (1ULL << pos);
+    num |= (1ULL << pos);
 }
-bool isBit1(__int64 num, int pos)
+bool isBit1(unsigned __int64 num, int pos)
 {
     return (num & (1ULL << pos)) != 0;
 }
@@ -69,7 +69,6 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
  
 	//索引仓库所需空间的块数（多少个int64）。
     // 使用多个int64来存储，每个int64存储64个bit，每个bit代表一个block的索引号是否被使用，使用了设置为0，未使用设置为1。
-	// 然后使用 num & (-num) 来获取最低位的1，来获取未使用的索引号。
     m_noUsedIdxWarehouseBufSize = m_blockCount / 64;//一个int64存储64个bit
     if (m_blockCount % 64 != 0)
         m_noUsedIdxWarehouseBufSize++;
@@ -214,6 +213,8 @@ bool SHM::Remove(int dataID)
 {
 	m_mutex.Lock();
 
+    //Sleep(20000);
+
     bool b = remove(dataID);
 
 	m_mutex.Unlock();
@@ -295,7 +296,6 @@ bool SHM::write(const char* pData, int dataSize, int dataID)
 
     if (!m_pIndexInfoBuf || !m_pBlockBuf)
     {
-        m_mutex.Unlock();
         return false;
     }
 
@@ -362,6 +362,7 @@ bool SHM::write(const char* pData, int dataSize, int dataID)
 
     //写index info
     m_pIndexInfoBuf[dataID] = headIdx;
+    //FlushViewOfFile(&m_pIndexInfoBuf[dataID], sizeof(int));
 
     return headIdx != -1;
 }
@@ -373,7 +374,6 @@ int SHM::read(char* pOutBuf, int outBufSize, int dataID)
 
     if (!m_pIndexInfoBuf || !m_pBlockBuf)
     {
-        m_mutex.Unlock();
         return -1;
     }
 
@@ -418,16 +418,18 @@ bool SHM::remove(int dataID)
 
     if (!m_pIndexInfoBuf)
     {
-        m_mutex.Unlock();
         return false;
     }
 
-    //移除indexinfo
-    int blockIdx = m_pIndexInfoBuf[dataID];
-    if (blockIdx != -1)
+    //设置所用到的block为未使用
+    traverseBlockIdx(dataID, [&](int blockIdx)->bool {
         setBlockIndexNoUsed(blockIdx);
-    m_pIndexInfoBuf[dataID] = -1;
+        return true;
+    });
 
+    //移除indexinfo
+    m_pIndexInfoBuf[dataID] = -1;
+    //FlushViewOfFile(&m_pIndexInfoBuf[dataID], sizeof(int));
     return true;
 }
 
@@ -476,6 +478,7 @@ int SHM::getNoUsedBlockIdx()
             //}
 
 #if defined(_M_X64) || defined(_M_AMD64)
+            //返回非0的lowest位序号
 			if (_BitScanForward64(&n, m_pNoUsedIdxWarehouseBuf[i]))
 			{
 				idxRet = n + (i * 64);
@@ -648,8 +651,8 @@ bool SHM::setBlockIndexUsed(int blockIdx)
     if (!whereInWarehouse(blockIdx, &warehouse, &idxInAWarehouse))
         return false;
 
-    m_pNoUsedIdxWarehouseBuf[warehouse] = 
-        setBit0(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
+    setBit0(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
+    //FlushViewOfFile(&m_pNoUsedIdxWarehouseBuf[warehouse], sizeof(unsigned __int64));
 
     return true;
 }
@@ -661,8 +664,8 @@ bool SHM::setBlockIndexNoUsed(int blockIdx)
     if (!whereInWarehouse(blockIdx, &warehouse, &idxInAWarehouse))
         return false;
 
-    m_pNoUsedIdxWarehouseBuf[warehouse] =
-        setBit1(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
+    setBit1(m_pNoUsedIdxWarehouseBuf[warehouse], idxInAWarehouse);
+    //FlushViewOfFile(&m_pNoUsedIdxWarehouseBuf[warehouse], sizeof(unsigned __int64));
 
     return true;
 }
