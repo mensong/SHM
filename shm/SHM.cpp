@@ -390,6 +390,8 @@ int SHM::read(char* pOutBuf, int outBufSize, int dataID)
     {
         char* pBlock = m_pBlockBuf + (blockIdx * (sizeof(int) + m_blockSize + sizeof(int)));
         int dataSize = *((int*)pBlock);    //当前block中存储的数据长度
+        if (dataSize < 0)
+            return -1;
         char* pData = pBlock + sizeof(int);//数据开始位置
         blockIdx = *((int*)(pData + dataSize));//下一个数据位置
 
