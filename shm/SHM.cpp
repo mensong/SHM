@@ -169,6 +169,9 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
 
 int SHM::AppendWrite(const char* pData, int dataSize, int startFromDataIdx/* = 0*/)
 {
+    if (startFromDataIdx < 0 || startFromDataIdx >= m_blockCount)
+        return -1;
+
     m_mutex.Lock();
 
     int dataIDCreated = -1;
