@@ -70,8 +70,8 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
 	//索引仓库所需空间的块数（多少个int64）。
     // 使用多个int64来存储，每个int64存储64个bit，每个bit代表一个block的索引号是否被使用，使用了设置为0，未使用设置为1。
 	// 然后使用 num & (-num) 来获取最低位的1，来获取未使用的索引号。
-    m_noUsedIdxWarehouseBufSize = m_blockCount / 63;//一个int64存储63个bit，最后一个bit不用。
-    if (m_blockCount % 63 != 0)
+    m_noUsedIdxWarehouseBufSize = m_blockCount / 64;//一个int64存储64个bit
+    if (m_blockCount % 64 != 0)
         m_noUsedIdxWarehouseBufSize++;
 
     LARGE_INTEGER allocSize;
@@ -146,7 +146,7 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
     if (created)
     {
         for (int i = 0; i < m_noUsedIdxWarehouseBufSize; i++)
-            m_pNoUsedIdxWarehouseBuf[i] = 0b0111111111111111111111111111111111111111111111111111111111111111;
+            m_pNoUsedIdxWarehouseBuf[i] = 0b1111111111111111111111111111111111111111111111111111111111111111;
     }
 
     //数据区
@@ -467,10 +467,17 @@ int SHM::getNoUsedBlockIdx()
 	{
         for (int i = 0; i < m_noUsedIdxWarehouseBufSize; i++)
         {
-            int n = getLowestNoZeroBitIndex(m_pNoUsedIdxWarehouseBuf[i]);
-			if (n != -1)
+            //int n = getLowestNoZeroBitIndex(m_pNoUsedIdxWarehouseBuf[i]);
+            //if (n != -1)
+            //{
+            //    idxRet = n + (i * 63);
+            //    break;
+            //}
+
+            DWORD n = -1;
+			if (_BitScanForward64(&n, m_pNoUsedIdxWarehouseBuf[i]))
 			{
-				idxRet = n + (i * 63);
+				idxRet = n + (i * 64);
                 break;
 			}
 
@@ -654,12 +661,12 @@ bool SHM::whereInWarehouse(int blockIdx, int* warehouseIdx, int* idxInAWarehouse
         return false;
 
 	//找到仓库的索引
-    *warehouseIdx = blockIdx / 63;
+    *warehouseIdx = blockIdx / 64;
     if (*warehouseIdx >= m_noUsedIdxWarehouseBufSize)
         return false;
 
 	//找到在仓库中的索引
-    *idxInAWarehouse = blockIdx % 63;
+    *idxInAWarehouse = blockIdx % 64;
 
     return true;
 }
