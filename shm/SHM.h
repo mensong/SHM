@@ -5,8 +5,8 @@
 #include "GlobalMutex.h"
 
 /*
-blockCount(3) startBlockIdx startBlockIdx startBlockIdx|unused indexs bits|blockSize blockData nextBlockIdx|blockSize blockData nextBlockIdx|blockSize blockData nextBlockIdx
-|-----------------------索引区域-----------------------|  未使用的索引位  |-------------------------------------------数据区域-----------------------------------------------|
+blockCount(3) blockSize(64)|startBlockIdx1 startBlockIdx2 startBlockIdx3|unused indexs bits|blockSize blockData nextBlockIdx|blockSize blockData nextBlockIdx|blockSize blockData nextBlockIdx
+|----------MetaData--------|------------------索引区域------------------|  未使用的索引位  |-------------------------------------------数据区域-----------------------------------------------|
 */
 class SHM
 {

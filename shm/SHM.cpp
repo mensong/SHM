@@ -237,7 +237,7 @@ void SHM::ListDataIDs(std::vector<int>& dataIDs)
     for (int i = 0; i < m_blockCount; i++)
     {
         if (m_pIndexInfoBuf[i] >= 0)
-            dataIDs.push_back(m_pIndexInfoBuf[i]);
+            dataIDs.push_back(i);
     }
 
     m_mutex.Unlock();
