@@ -142,7 +142,7 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
     }
 
     //未使用块记录区
-	m_pNoUsedIdxWarehouseBuf = (__int64*)(m_pIndexInfoBuf + m_indexInfoBufSize);
+	m_pNoUsedIdxWarehouseBuf = (unsigned __int64*)(m_pIndexInfoBuf + m_indexInfoBufSize);
     if (created)
     {
         for (int i = 0; i < m_noUsedIdxWarehouseBufSize; i++)
@@ -465,6 +465,7 @@ int SHM::getNoUsedBlockIdx()
 	int idxRet = -1;
 	do
 	{
+        DWORD n = -1;
         for (int i = 0; i < m_noUsedIdxWarehouseBufSize; i++)
         {
             //int n = getLowestNoZeroBitIndex(m_pNoUsedIdxWarehouseBuf[i]);
@@ -474,13 +475,24 @@ int SHM::getNoUsedBlockIdx()
             //    break;
             //}
 
-            DWORD n = -1;
+#if defined(_M_X64) || defined(_M_AMD64)
 			if (_BitScanForward64(&n, m_pNoUsedIdxWarehouseBuf[i]))
 			{
 				idxRet = n + (i * 64);
                 break;
 			}
-
+#else
+            if (_BitScanForward(&n, (DWORD)(m_pNoUsedIdxWarehouseBuf[i])))
+            {
+                idxRet = n + (i * 64);
+                break;
+            }
+			else if (_BitScanForward(&n, (DWORD)(m_pNoUsedIdxWarehouseBuf[i] >> 32)))
+            {
+                idxRet = (n + 32) + (i * 64);
+                break;
+            }
+#endif
         }
 	} while (false);
 

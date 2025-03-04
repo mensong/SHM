@@ -66,7 +66,7 @@ protected:
     int* m_pIndexInfoBuf;
     int m_indexInfoBufSize;
 
-	__int64* m_pNoUsedIdxWarehouseBuf;
+    unsigned __int64* m_pNoUsedIdxWarehouseBuf;
     int m_noUsedIdxWarehouseBufSize;
     bool whereInWarehouse(int blockIdx, int* warehouseIdx, int* idxInAWarehouse);
 
