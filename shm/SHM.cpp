@@ -167,7 +167,7 @@ bool SHM::Write(const char* pData, int dataSize, int dataID)
     return b;
 }
 
-int SHM::AppendWrite(const char* pData, int dataSize)
+int SHM::AppendWrite(const char* pData, int dataSize, int startFromDataIdx/* = 0*/)
 {
     m_mutex.Lock();
 
@@ -177,7 +177,7 @@ int SHM::AppendWrite(const char* pData, int dataSize)
         if (!m_pIndexInfoBuf)
             break;
 
-        for (int i = 0; i < m_blockCount; i++)
+        for (int i = startFromDataIdx; i < m_blockCount; i++)
         {
             if (m_pIndexInfoBuf[i] < 0)
             {

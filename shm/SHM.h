@@ -22,7 +22,7 @@ public:
     bool Write(const char* pData, int dataSize, int dataID);
 
     //添加一个数据，并返回dataID
-    int AppendWrite(const char* pData, int dataSize);
+    int AppendWrite(const char* pData, int dataSize, int startFromDataIdx = 0);
 
     //可传入pOutBuf=NULL时获得数据长度。
     int Read(char* pOutBuf, int outBufSize, int dataID);
