@@ -241,6 +241,7 @@ int main(int argc, char** argv)
 	};
 	testWriteFunc();
 	testWriteFunc();
+	shm.ResetDatas();
 	testWriteFunc();
 
 	{
@@ -309,6 +310,8 @@ int main(int argc, char** argv)
 			std::to_string((double)testCount / (t / 1000.0)));
 		std::cout << "Remove ËÙ¶È:" << sSpeed << " ´Î/Ãë" << std::endl;
 	}
+
+	//shm.ResetDatas();
 
 	{
 		std::vector<int> dataIDs;

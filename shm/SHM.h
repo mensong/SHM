@@ -37,6 +37,9 @@ public:
     //遍历dataID的用到的blockIdx
     bool TraverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb);
 
+    //重置数据
+    void ResetDatas();
+
 protected:
     //获得未使用的块序号，返回-1表示已经没有块可以使用
     int getNoUsedBlockIdx();

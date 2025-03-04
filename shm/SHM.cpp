@@ -292,6 +292,27 @@ bool SHM::TraverseBlockIdx(int dataID, FN_TraverseBlockIdxCallback cb)
     return b;
 }
 
+void SHM::ResetDatas()
+{
+	m_mutex.Lock();
+
+	if (!m_pIndexInfoBuf || !m_pNoUsedIdxWarehouseBuf)
+	{
+		m_mutex.Unlock();
+		return;
+	}
+
+    //索引区
+	for (int i = 0; i < m_indexInfoBufSize; i++)
+		m_pIndexInfoBuf[i] = -1;
+
+    //未使用块记录区
+	for (int i = 0; i < m_noUsedIdxWarehouseBufSize; i++)
+		m_pNoUsedIdxWarehouseBuf[i] = 0b1111111111111111111111111111111111111111111111111111111111111111;
+
+	m_mutex.Unlock();
+}
+
 bool SHM::write(const char* pData, int dataSize, int dataID)
 {
     if (dataID >= m_blockCount)
