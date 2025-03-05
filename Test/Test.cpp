@@ -142,10 +142,9 @@ int main(int argc, char** argv)
 		std::cout << "Init error." << std::endl;
 		return -1;
 	}
-
-	std::cout << "正在测试单线程读写中..." << std::endl;
-
+		
 	{
+		std::cout << "正在测试AppendWrite" << std::endl;
 		DWORD st = ::GetTickCount();
 		for (int i = 0; i < testCount; i++)
 		{
@@ -163,6 +162,7 @@ int main(int argc, char** argv)
 		std::cout << "Write 速度:" << sSpeed << " 次/秒" << std::endl;
 	}
 
+	std::cout << "正在测试Write" << std::endl;
 	auto testWriteFunc = [&]()->void
 	{
 		bool b = false;
@@ -203,12 +203,14 @@ int main(int argc, char** argv)
 	testWriteFunc();
 
 	{
+		std::cout << "正在测试ListDataIDs" << std::endl;
 		std::vector<int> dataIDs;
 		shm.ListDataIDs(dataIDs);
 		std::cout << "ListDataIDs count " << dataIDs.size() << " times." << std::endl;
 	}
 
 	{
+		std::cout << "正在测试Read" << std::endl;
 		DWORD st = ::GetTickCount();
 		for (size_t i = 0; i < testCount; i++)
 		{
@@ -252,10 +254,10 @@ int main(int argc, char** argv)
 
 	getchar();
 	g_bExit = true;
-	Sleep(2000);
+	Sleep(1000);
 
 	{
-		std::cout << "正在测试删除数据中..." << std::endl;
+		std::cout << "正在测试Remove" << std::endl;
 		DWORD st = ::GetTickCount();
 		for (size_t i = 0; i < testCount; i++)
 		{
@@ -267,15 +269,13 @@ int main(int argc, char** argv)
 			("大于" + std::to_string(testCount)) :
 			std::to_string((double)testCount / (t / 1000.0)));
 		std::cout << "Remove 速度:" << sSpeed << " 次/秒" << std::endl;
-	}
 
-	//shm.ResetDatas();
-
-	{
 		std::vector<int> dataIDs;
 		shm.ListDataIDs(dataIDs);
 		std::cout << "ListDataIDs count " << dataIDs.size() << " times." << std::endl;
 	}
+
+	//shm.ResetDatas();
 
 	std::cout << "按回车键退出程序" << std::endl;
 	getchar();
