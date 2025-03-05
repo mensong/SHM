@@ -49,7 +49,7 @@ SHM::~SHM()
     m_mutex.Unlock();
 }
 
-bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
+bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize, bool* isCreated)
 {
     TCHAR intialLockName[MAX_PATH] = TEXT("");
     lstrcat(intialLockName, TEXT("Init_"));
@@ -81,7 +81,7 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
         //thisBlockDataSize+ data + nextBlockIdx 
         blockCount * sizeof(int) + blockCount * sizeof(int) + (blockCount * (blockSize * sizeof(char))); 
 
-    bool created = false;
+    *isCreated = false;
     //打开共享的文件对象。
     m_hMapFile = OpenFileMapping(
         FILE_MAP_ALL_ACCESS, 
@@ -98,7 +98,7 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
             allocSize.LowPart/*低位*/,
             shmName);
         //DWORD err = GetLastError();
-        created = true;
+        *isCreated = true;
     }
 
     if (!m_hMapFile || m_hMapFile == INVALID_HANDLE_VALUE)
@@ -119,14 +119,14 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
         m_hMapFile = NULL;
         return false;
     }
-    if (created)
+    if (*isCreated)
     {
         memset(m_pBuf, 0, allocSize.QuadPart);
     }
 
     //元数据区
     m_pMetaDataBuf = (int*)m_pBuf;
-    if (created)
+    if (*isCreated)
     {
         m_pMetaDataBuf[0] = blockCount;
         m_pMetaDataBuf[1] = blockSize;
@@ -134,7 +134,7 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
 
     //索引区
 	m_pIndexInfoBuf = (int*)(m_pMetaDataBuf + metaDataSize);
-    if (created)
+    if (*isCreated)
     {
         for (int i = 0; i < m_indexInfoBufSize; i++)
             m_pIndexInfoBuf[i] = -1;
@@ -142,7 +142,7 @@ bool SHM::Init(const TCHAR* shmName, int blockCount, int blockSize)
 
     //未使用块记录区
 	m_pNoUsedIdxWarehouseBuf = (unsigned __int64*)(m_pIndexInfoBuf + m_indexInfoBufSize);
-    if (created)
+    if (*isCreated)
     {
         for (int i = 0; i < m_noUsedIdxWarehouseBufSize; i++)
             m_pNoUsedIdxWarehouseBuf[i] = 0b1111111111111111111111111111111111111111111111111111111111111111;

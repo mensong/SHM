@@ -14,7 +14,8 @@ int main(int argc, char** argv)
 	pInLen = strlen(pIn);
 	bool b = false;
 	int testCount = 10000;
-	if (!shm.Init(L"testMulti", 20002, 64))
+	bool isCreated = false;
+	if (!shm.Init(L"testMulti", 20002, 64, &isCreated))
 	{
 		std::cout << "Init error." << std::endl;
 		return -1;

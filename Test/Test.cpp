@@ -6,7 +6,6 @@
 #include <string>
 #include <process.h>
 #include "../shm/SHM.h"
-#include "simdb.hpp"
 #include <intrin.h>
 
 SHM shm;
@@ -71,7 +70,8 @@ void smallTest()
 		char pRead[10] = { 0 };
 		int readN;
 		SHM shm;
-		shm.Init(L"mensong1", 30, 1);
+		bool isCreated = false;
+		shm.Init(L"mensong1", 30, 1, &isCreated);
 
 		shm.Write("0", 1, 0);
 		memset(pRead, 0, 10);
@@ -126,60 +126,18 @@ void smallTest()
 	}
 }
 
-void testSimDB()
-{
-	simdb db("test", 64, 1005000);
-	int testCount = 500000;
-
-	auto testWriteFunc = [&]()->void
-	{
-		bool b = false;
-		char* pRead = new char[pInLen + 1];
-		pRead[pInLen] = 0;
-		DWORD st = ::GetTickCount();
-		for (int i = 0; i < testCount; ++i)
-		{
-			b = db.put(std::to_string(i).c_str(), pIn, pInLen);			
-			if (!b)
-			{
-				std::cout << "写数据出错:" << i << std::endl;
-			}
-			pRead[0] = 0;
-			b = db.get(std::to_string(i).c_str(), pRead, pInLen);
-			pRead[pInLen] = 0;
-			if (!b)
-			{
-				std::cout << "读数据出错:" << i << std::endl;
-			}
-			else if (strcmp(pIn, pRead) != 0)
-			{
-				std::cout << "读写数据出错:" << i << std::endl;
-			}
-		}
-		DWORD t = ::GetTickCount() - st;
-		std::cout << "simdb Write " << testCount << "次耗时:" << t << "毫秒" << std::endl;
-		std::cout << "simdb Write 速度:" << (double)testCount / (t / 1000.0) << " 次/秒" << std::endl;
-		delete[] pRead;
-	};
-	testWriteFunc();
-	testWriteFunc();
-	testWriteFunc();
-
-	getchar();
-}
-
 int main(int argc, char** argv)
 {
 	pInLen = strlen(pIn);
 
-	//testSimDB();
 	//smallTest();
 	//bitmapTest();
 	//return 0;
 
 
 	int testCount = 100000;
-	if (!shm.Init(L"mensong", 200000, 64))
+	bool isCreated = false;
+	if (!shm.Init(L"mensong", 200000, 64, &isCreated))
 	{
 		std::cout << "Init error." << std::endl;
 		return -1;

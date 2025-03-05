@@ -17,7 +17,7 @@ public:
     SHM();
     ~SHM();
 
-    bool Init(const TCHAR* shmName, int blockCount, int blockSize);
+    bool Init(const TCHAR* shmName, int blockCount, int blockSize, bool* isCreated);
 
     bool Write(const char* pData, int dataSize, int dataID);
 
